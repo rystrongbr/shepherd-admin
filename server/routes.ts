@@ -77,9 +77,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   /**
    * POST /api/ai/scripture
-   * Get a real AI-powered scripture response for a topic + question.
-   * Public — called directly from the My Shepherd app.
-   * Body: { topic: string, question?: string }
+   * Body: { topic, question? }
    */
   app.post("/api/ai/scripture", async (req, res) => {
     const { topic, question = "" } = req.body;
@@ -89,6 +87,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(result);
     } catch (err: any) {
       console.error("AI scripture error:", err.message);
+      res.status(500).json({ error: "AI response failed", detail: err.message });
+    }
+  });
+
+  /**
+   * GET /api/ai/scripture?topic=Anxiety&question=...
+   * Same as POST but via GET so iframe sandbox fetch restrictions don't block it.
+   * The Perplexity iframe allows GET requests to external domains.
+   */
+  app.get("/api/ai/scripture", async (req, res) => {
+    const topic = String(req.query.topic || "").trim();
+    const question = String(req.query.question || "").trim();
+    if (!topic) return res.status(400).json({ error: "topic is required" });
+    try {
+      const result = await getScriptureResponse(topic, question);
+      res.json(result);
+    } catch (err: any) {
+      console.error("AI scripture GET error:", err.message);
       res.status(500).json({ error: "AI response failed", detail: err.message });
     }
   });
