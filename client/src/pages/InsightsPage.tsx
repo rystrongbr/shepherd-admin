@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import type { Insight } from "@shared/schema";
 
 const CHURCH_ID = 1;
-const APP_URL = "https://www.perplexity.ai/computer/a/my-shepherd-3ArzyJ0SRA25IpdOKoTgOA";
+const APP_URL = "https://app.myshepherdapp.church";
 
 const TOPIC_EMOJIS: Record<string, string> = {
   Anxiety: "🕊️", Forgiveness: "🤝", Faith: "✝️", Prayer: "🙏",
