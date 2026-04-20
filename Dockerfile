@@ -21,6 +21,9 @@ COPY . .
 # Build the app
 RUN npm run build
 
+# Ensure my-shepherd-app is in the right place for runtime
+RUN ls my-shepherd-app/
+
 # Expose port
 EXPOSE 5000
 

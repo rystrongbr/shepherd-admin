@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import path from "path";
 
 const app = express();
 const httpServer = createServer(app);
@@ -88,6 +89,22 @@ app.use((req, res, next) => {
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
   if (process.env.NODE_ENV === "production") {
+    // Serve My Shepherd static app at app.myshepherdapp.church
+    const myShepherdPath = path.resolve(process.cwd(), "my-shepherd-app");
+    app.use((req, res, next) => {
+      const host = req.hostname || "";
+      if (host === "app.myshepherdapp.church" || host === "www.myshepherdapp.church") {
+        if (req.path.startsWith("/api")) return next();
+        const filePath = path.join(myShepherdPath, req.path === "/" ? "index.html" : req.path);
+        const fs = require("fs");
+        if (fs.existsSync(filePath) && !fs.statSync(filePath).isDirectory()) {
+          return res.sendFile(filePath);
+        }
+        return res.sendFile(path.join(myShepherdPath, "index.html"));
+      }
+      next();
+    });
+    // Serve admin dashboard for all other hosts
     serveStatic(app);
   } else {
     const { setupVite } = await import("./vite");

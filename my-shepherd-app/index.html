@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Shepherd — Scripture & Reflection</title>
+  <meta name="description" content="Find scripture, comfort, and reflection for any moment in your faith journey." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Church Affiliation Modal -->
+  <div id="affiliation-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" style="display:none">
+    <div class="modal-card">
+      <div class="modal-header">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+          <rect x="16" y="2" width="4" height="8" rx="1" fill="#7B4A1E"/>
+          <rect x="4" y="10" width="28" height="24" rx="2" fill="#7B4A1E" opacity="0.15"/>
+          <rect x="4" y="10" width="28" height="24" rx="2" stroke="#7B4A1E" stroke-width="2"/>
+          <rect x="14" y="22" width="8" height="12" rx="1" fill="#7B4A1E" opacity="0.6"/>
+          <rect x="8" y="16" width="6" height="6" rx="0.5" fill="#7B4A1E" opacity="0.5"/>
+          <rect x="22" y="16" width="6" height="6" rx="0.5" fill="#7B4A1E" opacity="0.5"/>
+        </svg>
+        <h2 id="modal-title" class="modal-title">Which church do you attend?</h2>
+        <p class="modal-subtitle">Connecting to your church lets your pastor see what topics matter most to your congregation.</p>
+      </div>
+
+      <div class="modal-search-wrap">
+        <input
+          id="church-search-input"
+          type="text"
+          class="church-search-input"
+          placeholder="Search by church name or city…"
+          autocomplete="off"
+          data-testid="input-church-search"
+        />
+        <div id="church-search-results" class="church-results" style="display:none"></div>
+      </div>
+
+      <div id="selected-church-badge" class="selected-church-badge" style="display:none"></div>
+
+      <div class="modal-location-row">
+        <button id="btn-find-near-me" class="btn-outline-sm" data-testid="button-find-near-me">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+          Find churches near me
+        </button>
+        <span id="location-status" class="location-status"></span>
+      </div>
+
+      <div id="nearby-churches-list" class="nearby-list" style="display:none"></div>
+
+      <div class="modal-actions">
+        <button id="btn-confirm-affiliation" class="btn-primary" disabled data-testid="button-confirm-affiliation">Connect to My Church</button>
+        <button id="btn-skip-affiliation" class="btn-ghost" data-testid="button-skip-affiliation">I'll do this later</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app">
+
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="logo-group">
+          <svg class="logo-icon" width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+            <circle cx="14" cy="14" r="13" stroke="#7B4A1E" stroke-width="2"/>
+            <path d="M14 6 L14 22 M9 10 C9 10 11 8 14 10 C17 8 19 10 19 10" stroke="#7B4A1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="logo-text">My Shepherd</span>
+        </div>
+        <div id="church-badge-header" class="church-badge-header" style="display:none"></div>
+      </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="hero-section">
+      <p class="hero-eyebrow">King James Bible · Scripture &amp; Reflection</p>
+      <h1 class="hero-title">What's on your heart today?</h1>
+      <p class="hero-sub">Choose a topic or ask your own question — receive scripture and a personal reflection.</p>
+    </section>
+
+    <!-- Question Input -->
+    <section class="input-section">
+      <div class="input-card" id="input-card">
+        <textarea
+          id="question-input"
+          class="question-textarea"
+          placeholder="Ask anything… "Lord, why do I feel anxious?" or "Give me a verse about forgiveness""
+          rows="2"
+          data-testid="input-question"
+        ></textarea>
+        <div class="input-footer">
+          <span class="input-hint" id="char-hint"></span>
+          <button id="btn-ask" class="btn-ask" data-testid="button-ask">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Ask
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Topic Grid -->
+    <section class="topics-section">
+      <h2 class="topics-label">Browse by topic</h2>
+      <div class="topics-grid" id="topics-grid" data-testid="topics-grid">
+        <!-- Rendered by JS -->
+      </div>
+    </section>
+
+    <!-- Response Area -->
+    <section id="response-section" class="response-section" style="display:none">
+      <div class="response-card" id="response-card">
+        <div class="response-topic-tag" id="response-topic-tag"></div>
+        <div id="response-content" class="response-content">
+          <div class="response-loading">
+            <div class="dot-flashing"><span></span><span></span><span></span></div>
+            <p>Finding scripture…</p>
+          </div>
+        </div>
+        <div id="follow-up-chips" class="follow-up-chips" style="display:none"></div>
+        <button id="btn-ask-another" class="btn-ask-another" style="display:none" data-testid="button-ask-another">
+          Ask another question
+        </button>
+      </div>
+    </section>
+
+    <!-- Trending Strip -->
+    <section id="trending-section" class="trending-section" style="display:none">
+      <div class="trending-inner">
+        <span class="trending-label">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+          Others are asking about…
+        </span>
+        <div id="trending-chips" class="trending-chips"></div>
+      </div>
+    </section>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
