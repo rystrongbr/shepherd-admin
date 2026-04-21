@@ -2,7 +2,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, and, desc, sql, gte, isNull, or } from "drizzle-orm";
 import {
-  churches, members, campaigns, sequences, activities, insights, affiliations,
+  churches, members, campaigns, sequences, activities, insights, affiliations, appUsers, chats,
   type Church, type InsertChurch,
   type Member, type InsertMember,
   type Campaign, type InsertCampaign,
@@ -10,6 +10,8 @@ import {
   type Activity, type InsertActivity,
   type Insight, type InsertInsight,
   type Affiliation, type InsertAffiliation,
+  type AppUser, type InsertAppUser,
+  type Chat, type InsertChat,
 } from "@shared/schema";
 
 const sqlite = new Database("shepherd.db");
@@ -96,6 +98,29 @@ sqlite.exec(`
     first_name TEXT NOT NULL DEFAULT '',
     email TEXT NOT NULL DEFAULT '',
     location TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS app_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT '',
+    google_id TEXT DEFAULT '',
+    magic_token TEXT DEFAULT '',
+    magic_expiry TEXT DEFAULT '',
+    church_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS chats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    question TEXT NOT NULL DEFAULT '',
+    verse_ref TEXT NOT NULL DEFAULT '',
+    verse_text TEXT NOT NULL DEFAULT '',
+    reflection TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
@@ -250,6 +275,20 @@ export interface IStorage {
   // Affiliations
   createAffiliation(data: InsertAffiliation): Affiliation;
   getAffiliation(sessionId: string): Affiliation | undefined;
+
+  // App Users
+  getUserByEmail(email: string): AppUser | undefined;
+  getUserById(id: number): AppUser | undefined;
+  getUserByGoogleId(googleId: string): AppUser | undefined;
+  createUser(data: InsertAppUser): AppUser;
+  updateUser(id: number, data: Partial<InsertAppUser>): AppUser | undefined;
+  setMagicToken(email: string, token: string, expiry: string): AppUser;
+  verifyMagicToken(token: string): AppUser | undefined;
+
+  // Chats
+  saveChat(data: InsertChat): Chat;
+  getUserChats(userId: number, limit?: number): Chat[];
+  searchUserChats(userId: number, query: string): Chat[];
 }
 
 export const storage: IStorage = {
@@ -347,4 +386,49 @@ export const storage: IStorage = {
   // Affiliations
   createAffiliation: (data) => db.insert(affiliations).values(data).returning().get(),
   getAffiliation: (sessionId) => db.select().from(affiliations).where(eq(affiliations.sessionId, sessionId)).get(),
+
+  // App Users
+  getUserByEmail: (email) => db.select().from(appUsers).where(eq(appUsers.email, email.toLowerCase())).get(),
+  getUserById: (id) => db.select().from(appUsers).where(eq(appUsers.id, id)).get(),
+  getUserByGoogleId: (googleId) => db.select().from(appUsers).where(eq(appUsers.googleId, googleId)).get(),
+  createUser: (data) => db.insert(appUsers).values({ ...data, email: data.email.toLowerCase() }).returning().get(),
+  updateUser: (id, data) => db.update(appUsers).set(data).where(eq(appUsers.id, id)).returning().get(),
+
+  setMagicToken: (email, token, expiry) => {
+    const existing = db.select().from(appUsers).where(eq(appUsers.email, email.toLowerCase())).get();
+    if (existing) {
+      return db.update(appUsers).set({ magicToken: token, magicExpiry: expiry })
+        .where(eq(appUsers.email, email.toLowerCase())).returning().get()!;
+    }
+    return db.insert(appUsers).values({
+      email: email.toLowerCase(), magicToken: token, magicExpiry: expiry,
+      createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString(),
+    }).returning().get();
+  },
+
+  verifyMagicToken: (token) => {
+    const user = db.select().from(appUsers).where(eq(appUsers.magicToken, token)).get();
+    if (!user) return undefined;
+    if (!user.magicExpiry || new Date() > new Date(user.magicExpiry)) return undefined;
+    // Clear token after use and update lastLoginAt
+    db.update(appUsers).set({ magicToken: "", magicExpiry: "", lastLoginAt: new Date().toISOString() })
+      .where(eq(appUsers.id, user.id)).run();
+    return user;
+  },
+
+  // Chats
+  saveChat: (data) => db.insert(chats).values(data).returning().get(),
+  getUserChats: (userId, limit = 50) =>
+    db.select().from(chats).where(eq(chats.userId, userId)).orderBy(desc(chats.createdAt)).limit(limit).all(),
+  searchUserChats: (userId, query) => {
+    const q = `%${query.toLowerCase()}%`;
+    return db.select().from(chats)
+      .where(and(
+        eq(chats.userId, userId),
+        sql`(lower(${chats.topic}) LIKE ${q} OR lower(${chats.question}) LIKE ${q} OR lower(${chats.verseText}) LIKE ${q} OR lower(${chats.reflection}) LIKE ${q})`
+      ))
+      .orderBy(desc(chats.createdAt))
+      .limit(30)
+      .all();
+  },
 };

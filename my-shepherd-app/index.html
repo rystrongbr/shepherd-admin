@@ -8,12 +8,46 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- Google Sign-In -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
+  <!-- Login Modal -->
+  <div id="login-modal" class="modal-overlay" role="dialog" aria-modal="true" style="display:none">
+    <div class="modal-card">
+      <div class="modal-header">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+          <circle cx="18" cy="18" r="17" stroke="#7B4A1E" stroke-width="2"/>
+          <path d="M18 8 L18 28 M13 13 C13 13 15 11 18 13 C21 11 23 13 23 13" stroke="#7B4A1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <h2 class="modal-title">Sign in to My Shepherd</h2>
+        <p class="modal-subtitle">Save your scripture history and pick up where you left off on any device.</p>
+      </div>
+
+      <!-- Google Sign-In -->
+      <div id="google-signin-btn" style="display:flex;justify-content:center;margin-bottom:16px;"></div>
+
+      <div class="login-divider"><span>or sign in with email</span></div>
+
+      <!-- Magic Link -->
+      <div id="magic-link-form">
+        <input id="magic-email-input" type="email" class="church-search-input" placeholder="Enter your email address" autocomplete="email" data-testid="input-magic-email" />
+        <button id="btn-send-magic-link" class="btn-primary" style="margin-top:10px;" data-testid="button-send-magic-link">
+          Send Sign-In Link
+        </button>
+        <div id="magic-link-sent" style="display:none;text-align:center;padding:12px;color:var(--brown);font-size:0.85rem;">
+          ✓ Check your email — a sign-in link is on its way!
+        </div>
+      </div>
+
+      <button id="btn-skip-login" class="btn-ghost" data-testid="button-skip-login">Continue without signing in</button>
+    </div>
+  </div>
+
   <!-- Church Affiliation Modal -->
-  <div id="affiliation-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" style="display:none">
+  <div id="affiliation-modal" class="modal-overlay" role="dialog" aria-modal="true" style="display:none">
     <div class="modal-card">
       <div class="modal-header">
         <svg width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
@@ -24,24 +58,14 @@
           <rect x="8" y="16" width="6" height="6" rx="0.5" fill="#7B4A1E" opacity="0.5"/>
           <rect x="22" y="16" width="6" height="6" rx="0.5" fill="#7B4A1E" opacity="0.5"/>
         </svg>
-        <h2 id="modal-title" class="modal-title">Which church do you attend?</h2>
+        <h2 class="modal-title">Which church do you attend?</h2>
         <p class="modal-subtitle">Connecting to your church lets your pastor see what topics matter most to your congregation.</p>
       </div>
-
       <div class="modal-search-wrap">
-        <input
-          id="church-search-input"
-          type="text"
-          class="church-search-input"
-          placeholder="Search by church name or city…"
-          autocomplete="off"
-          data-testid="input-church-search"
-        />
+        <input id="church-search-input" type="text" class="church-search-input" placeholder="Search by church name or city…" autocomplete="off" data-testid="input-church-search" />
         <div id="church-search-results" class="church-results" style="display:none"></div>
       </div>
-
       <div id="selected-church-badge" class="selected-church-badge" style="display:none"></div>
-
       <div class="modal-location-row">
         <button id="btn-find-near-me" class="btn-outline-sm" data-testid="button-find-near-me">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
@@ -49,9 +73,7 @@
         </button>
         <span id="location-status" class="location-status"></span>
       </div>
-
       <div id="nearby-churches-list" class="nearby-list" style="display:none"></div>
-
       <div class="modal-actions">
         <button id="btn-confirm-affiliation" class="btn-primary" disabled data-testid="button-confirm-affiliation">Connect to My Church</button>
         <button id="btn-skip-affiliation" class="btn-ghost" data-testid="button-skip-affiliation">I'll do this later</button>
@@ -72,72 +94,103 @@
           </svg>
           <span class="logo-text">My Shepherd</span>
         </div>
-        <div id="church-badge-header" class="church-badge-header" style="display:none"></div>
+        <div class="header-right">
+          <div id="church-badge-header" class="church-badge-header" style="display:none"></div>
+          <div id="user-menu-area">
+            <button id="btn-sign-in-header" class="btn-sign-in-header" data-testid="button-sign-in-header">Sign In</button>
+            <div id="user-avatar-menu" class="user-avatar-menu" style="display:none">
+              <button id="btn-user-avatar" class="user-avatar-btn" data-testid="button-user-avatar"></button>
+              <div id="user-dropdown" class="user-dropdown" style="display:none">
+                <div id="user-dropdown-email" class="user-dropdown-email"></div>
+                <button id="btn-sign-out" class="user-dropdown-item" data-testid="button-sign-out">Sign Out</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Tab bar -->
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="explore" data-testid="tab-explore">Explore</button>
+        <button class="tab-btn" data-tab="history" data-testid="tab-history">Search Chats</button>
       </div>
     </header>
 
-    <!-- Hero -->
-    <section class="hero-section">
-      <p class="hero-eyebrow">King James Bible · Scripture &amp; Reflection</p>
-      <h1 class="hero-title">What's on your heart today?</h1>
-      <p class="hero-sub">Choose a topic or ask your own question — receive scripture and a personal reflection.</p>
-    </section>
+    <!-- Explore Tab -->
+    <div id="tab-explore" class="tab-content">
+      <section class="hero-section">
+        <p class="hero-eyebrow">King James Bible · Scripture &amp; Reflection</p>
+        <h1 class="hero-title">What's on your heart today?</h1>
+        <p class="hero-sub">Choose a topic or ask your own question — receive scripture and a personal reflection.</p>
+      </section>
 
-    <!-- Question Input -->
-    <section class="input-section">
-      <div class="input-card" id="input-card">
-        <textarea
-          id="question-input"
-          class="question-textarea"
-          placeholder="Ask anything… "Lord, why do I feel anxious?" or "Give me a verse about forgiveness""
-          rows="2"
-          data-testid="input-question"
-        ></textarea>
-        <div class="input-footer">
-          <span class="input-hint" id="char-hint"></span>
-          <button id="btn-ask" class="btn-ask" data-testid="button-ask">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            Ask
-          </button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Topic Grid -->
-    <section class="topics-section">
-      <h2 class="topics-label">Browse by topic</h2>
-      <div class="topics-grid" id="topics-grid" data-testid="topics-grid">
-        <!-- Rendered by JS -->
-      </div>
-    </section>
-
-    <!-- Response Area -->
-    <section id="response-section" class="response-section" style="display:none">
-      <div class="response-card" id="response-card">
-        <div class="response-topic-tag" id="response-topic-tag"></div>
-        <div id="response-content" class="response-content">
-          <div class="response-loading">
-            <div class="dot-flashing"><span></span><span></span><span></span></div>
-            <p>Finding scripture…</p>
+      <section class="input-section">
+        <div class="input-card" id="input-card">
+          <textarea id="question-input" class="question-textarea" placeholder="Ask anything… "Lord, why do I feel anxious?" or "Give me a verse about forgiveness"" rows="2" data-testid="input-question"></textarea>
+          <div class="input-footer">
+            <span class="input-hint" id="char-hint"></span>
+            <button id="btn-ask" class="btn-ask" data-testid="button-ask" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              Ask
+            </button>
           </div>
         </div>
-        <div id="follow-up-chips" class="follow-up-chips" style="display:none"></div>
-        <button id="btn-ask-another" class="btn-ask-another" style="display:none" data-testid="button-ask-another">
-          Ask another question
-        </button>
-      </div>
-    </section>
+      </section>
 
-    <!-- Trending Strip -->
-    <section id="trending-section" class="trending-section" style="display:none">
-      <div class="trending-inner">
-        <span class="trending-label">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-          Others are asking about…
-        </span>
-        <div id="trending-chips" class="trending-chips"></div>
+      <section class="topics-section">
+        <h2 class="topics-label">Browse by topic</h2>
+        <div class="topics-grid" id="topics-grid" data-testid="topics-grid"></div>
+      </section>
+
+      <section id="response-section" class="response-section" style="display:none">
+        <div class="response-card" id="response-card">
+          <div class="response-topic-tag" id="response-topic-tag"></div>
+          <div id="response-content" class="response-content"></div>
+          <div id="follow-up-chips" class="follow-up-chips" style="display:none"></div>
+          <button id="btn-ask-another" class="btn-ask-another" style="display:none" data-testid="button-ask-another">Ask another question</button>
+        </div>
+      </section>
+
+      <section id="trending-section" class="trending-section" style="display:none">
+        <div class="trending-inner">
+          <span class="trending-label">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            Others are asking about…
+          </span>
+          <div id="trending-chips" class="trending-chips"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Search Chats Tab -->
+    <div id="tab-history" class="tab-content" style="display:none">
+      <div class="history-container">
+        <div class="history-header">
+          <h2 class="history-title">Search Chats</h2>
+          <p class="history-sub" id="history-sub">Your saved scripture conversations</p>
+        </div>
+
+        <!-- Not logged in state -->
+        <div id="history-logged-out" style="display:none" class="history-empty">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" style="margin:0 auto 12px;display:block;">
+            <circle cx="24" cy="24" r="23" stroke="#D4B896" stroke-width="2"/>
+            <path d="M24 12 L24 36 M17 18 C17 18 20 15 24 18 C28 15 31 18 31 18" stroke="#D4B896" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <p style="color:var(--text-mid);font-size:0.9rem;margin-bottom:14px;">Sign in to save and search your scripture history</p>
+          <button class="btn-primary" style="width:auto;padding:10px 24px;" onclick="openLoginModal()">Sign In</button>
+        </div>
+
+        <!-- Logged in + search -->
+        <div id="history-logged-in" style="display:none">
+          <div class="history-search-wrap">
+            <input id="history-search-input" type="text" class="church-search-input" placeholder="Search by topic, verse, or keyword…" data-testid="input-history-search" />
+          </div>
+          <div id="history-list" class="history-list"></div>
+          <div id="history-empty" class="history-empty" style="display:none">
+            <p style="color:var(--text-light);font-size:0.85rem;">No chats found. Start exploring topics to build your history.</p>
+          </div>
+        </div>
       </div>
-    </section>
+    </div>
 
   </div>
 

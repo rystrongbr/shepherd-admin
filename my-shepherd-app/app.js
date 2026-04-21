@@ -5,7 +5,7 @@
 
 // ── Backend URL ────────────────────────────────────────────────────────────
 // Always-on Railway backend — live 24/7
-const API_BASE = "";  // Same Railway server — use relative paths
+const API_BASE = "https://app.myshepherdapp.church";
 
 // ── Session ID ────────────────────────────────────────────────────────────
 // Strategy: embed ?sid=<uuid> in the URL hash so it survives reloads
@@ -406,12 +406,14 @@ async function showResponse(topic, question) {
     content.innerHTML = buildResponseHTML(topic, question, verse, reflection);
     renderFollowUpChipsFromList(followUps);
     renderShareButton();
+    saveChatToHistory(topic, question, verse, reflection);
   } catch (err) {
     console.error("AI error, using fallback:", err.message);
     const fallback = getFallbackResponse(topic);
     content.innerHTML = buildResponseHTML(topic, question, fallback.verse, fallback.reflection);
     renderFollowUpChips(topic);
     renderShareButton();
+    saveChatToHistory(topic, question, fallback.verse, fallback.reflection);
   }
 
   askBtn.style.display = "block";

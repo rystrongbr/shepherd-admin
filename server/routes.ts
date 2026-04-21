@@ -37,6 +37,11 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/churches/nearby",
     "/ai/scripture",
     "/onboard",
+    "/user/magic-link",
+    "/user/verify",
+    "/user/google",
+    "/user/me",
+    "/chats",
   ];
   if (PUBLIC.some(p => req.path.startsWith(p))) return next();
   // Also allow GET /affiliations/:sessionId (for session restore)
@@ -56,6 +61,143 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ─── Health check (Railway / uptime monitors) ────────────────────────────
   app.get("/api/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
+
+  // ─── App User Auth (Magic Link + Google) ────────────────────────────
+
+  /**
+   * POST /api/user/magic-link
+   * Send a magic login link to the user's email.
+   * Public — no auth required.
+   */
+  app.post("/api/user/magic-link", async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "email is required" });
+
+    // Generate a secure token
+    const token = require("crypto").randomBytes(32).toString("hex");
+    const expiry = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
+
+    storage.setMagicToken(email, token, expiry);
+
+    // Build magic link URL
+    const baseUrl = process.env.APP_URL || "https://app.myshepherdapp.church";
+    const magicUrl = `${baseUrl}/#?magic=${token}`;
+
+    // Send via SendGrid
+    try {
+      const graceChurch = storage.getChurch(1);
+      if (graceChurch?.sendgridApiKey) {
+        const sgMail = await import("@sendgrid/mail");
+        sgMail.default.setApiKey(graceChurch.sendgridApiKey);
+        await sgMail.default.send({
+          to: email,
+          from: { email: "ryan+shepherd@guacapp.com", name: "My Shepherd" },
+          subject: "Your My Shepherd sign-in link",
+          html: `
+            <div style="font-family:Georgia,serif;max-width:500px;margin:0 auto;background:#f5f0eb;padding:32px;border-radius:12px;">
+              <h2 style="color:#7B4A1E;margin:0 0 8px;">My Shepherd</h2>
+              <p style="color:#5A4A3A;margin:0 0 24px;">Click the button below to sign in. This link expires in 15 minutes.</p>
+              <a href="${magicUrl}" style="display:inline-block;background:#7B4A1E;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-family:Arial,sans-serif;font-weight:600;">Sign In to My Shepherd</a>
+              <p style="color:#9A8A7A;font-size:12px;margin-top:24px;font-family:Arial,sans-serif;">If you didn't request this, you can ignore this email.</p>
+            </div>
+          `,
+        });
+      }
+    } catch (emailErr: any) {
+      console.error("Magic link email failed:", emailErr.message);
+    }
+
+    res.json({ ok: true, message: "Magic link sent" });
+  });
+
+  /**
+   * GET /api/user/verify?token=...
+   * Verify a magic link token and return user data.
+   * Public — called from the app after redirect.
+   */
+  app.get("/api/user/verify", (req, res) => {
+    const token = String(req.query.token || "").trim();
+    if (!token) return res.status(400).json({ error: "token is required" });
+    const user = storage.verifyMagicToken(token);
+    if (!user) return res.status(401).json({ error: "Invalid or expired token" });
+    res.json({ ok: true, user: { id: user.id, email: user.email, name: user.name, churchId: user.churchId } });
+  });
+
+  /**
+   * POST /api/user/google
+   * Sign in or create account with Google ID token.
+   * Public — called from the app after Google sign-in.
+   */
+  app.post("/api/user/google", async (req, res) => {
+    const { googleId, email, name } = req.body;
+    if (!googleId || !email) return res.status(400).json({ error: "googleId and email are required" });
+
+    let user = storage.getUserByGoogleId(googleId);
+    if (!user) {
+      user = storage.getUserByEmail(email);
+      if (user) {
+        // Link Google ID to existing account
+        user = storage.updateUser(user.id, { googleId, lastLoginAt: new Date().toISOString() })!;
+      } else {
+        // Create new account
+        user = storage.createUser({
+          email, name: name || "", googleId,
+          createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString(),
+        });
+      }
+    } else {
+      user = storage.updateUser(user.id, { lastLoginAt: new Date().toISOString() })!;
+    }
+
+    res.json({ ok: true, user: { id: user.id, email: user.email, name: user.name, churchId: user.churchId } });
+  });
+
+  /**
+   * GET /api/user/me?userId=...
+   * Get user profile. Public (user identified by ID passed from app).
+   */
+  app.get("/api/user/me", (req, res) => {
+    const userId = Number(req.query.userId);
+    if (!userId) return res.status(400).json({ error: "userId required" });
+    const user = storage.getUserById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json({ id: user.id, email: user.email, name: user.name, churchId: user.churchId });
+  });
+
+  // ─── Chat History ───────────────────────────────────────────────────────────────────
+
+  /**
+   * POST /api/chats
+   * Save a chat (topic + verse + reflection) for a logged-in user.
+   * Public — userId passed in body.
+   */
+  app.post("/api/chats", (req, res) => {
+    const { userId, topic, question, verseRef, verseText, reflection } = req.body;
+    if (!userId || !topic) return res.status(400).json({ error: "userId and topic required" });
+    const chat = storage.saveChat({
+      userId: Number(userId), topic,
+      question: question || "",
+      verseRef: verseRef || "",
+      verseText: verseText || "",
+      reflection: reflection || "",
+      createdAt: new Date().toISOString(),
+    });
+    res.json(chat);
+  });
+
+  /**
+   * GET /api/chats?userId=1&q=anxiety
+   * Get chat history for a user, optionally filtered by search query.
+   */
+  app.get("/api/chats", (req, res) => {
+    const userId = Number(req.query.userId);
+    if (!userId) return res.status(400).json({ error: "userId required" });
+    const q = String(req.query.q || "").trim();
+    const chatList = q
+      ? storage.searchUserChats(userId, q)
+      : storage.getUserChats(userId, 50);
+    res.json(chatList);
+  });
 
   // ─── Auth ──────────────────────────────────────────────────────────────────
 

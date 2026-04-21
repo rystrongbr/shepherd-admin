@@ -118,3 +118,36 @@ export const affiliations = sqliteTable("affiliations", {
 export const insertAffiliationSchema = createInsertSchema(affiliations).omit({ id: true });
 export type InsertAffiliation = z.infer<typeof insertAffiliationSchema>;
 export type Affiliation = typeof affiliations.$inferSelect;
+
+// App Users — My Shepherd registered users (magic link + Google)
+export const appUsers = sqliteTable("app_users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  name: text("name").notNull().default(""),
+  googleId: text("google_id").default(""),     // set if signed in via Google
+  magicToken: text("magic_token").default(""), // current pending magic link token
+  magicExpiry: text("magic_expiry").default(""), // ISO expiry of magic token
+  churchId: integer("church_id"),              // affiliated church (if any)
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+  lastLoginAt: text("last_login_at").notNull().default(new Date().toISOString()),
+});
+
+export const insertAppUserSchema = createInsertSchema(appUsers).omit({ id: true });
+export type InsertAppUser = z.infer<typeof insertAppUserSchema>;
+export type AppUser = typeof appUsers.$inferSelect;
+
+// Chat History — full scripture + reflection saved per user session
+export const chats = sqliteTable("chats", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  topic: text("topic").notNull(),
+  question: text("question").notNull().default(""),
+  verseRef: text("verse_ref").notNull().default(""),
+  verseText: text("verse_text").notNull().default(""),
+  reflection: text("reflection").notNull().default(""),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+
+export const insertChatSchema = createInsertSchema(chats).omit({ id: true });
+export type InsertChat = z.infer<typeof insertChatSchema>;
+export type Chat = typeof chats.$inferSelect;
