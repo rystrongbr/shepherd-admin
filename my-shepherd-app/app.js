@@ -222,6 +222,53 @@ async function goDeeperOnCurrent() {
     renderShareButton();
   }
   isLoading = false;
+  renderActionButtons();
+}
+
+function renderActionButtons() {
+  document.getElementById("action-btn-row")?.remove();
+
+  const card = document.getElementById("response-card");
+  const row  = document.createElement("div");
+  row.id = "action-btn-row";
+  row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;";
+
+  const deeperBtn = document.createElement("button");
+  deeperBtn.id = "btn-go-deeper";
+  deeperBtn.className = "btn-go-deeper";
+  deeperBtn.setAttribute("data-testid", "button-go-deeper");
+  deeperBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Go Deeper`;
+  deeperBtn.addEventListener("click", goDeeperOnCurrent);
+
+  const nextBtn = document.createElement("button");
+  nextBtn.id = "btn-next-question";
+  nextBtn.className = "btn-next-question";
+  nextBtn.setAttribute("data-testid", "button-next-question");
+  nextBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg> Next Question`;
+  nextBtn.addEventListener("click", handleNextQuestion);
+
+  row.appendChild(deeperBtn);
+  row.appendChild(nextBtn);
+  card.appendChild(row);
+}
+
+function handleNextQuestion() {
+  document.getElementById("response-section").style.display = "none";
+  document.getElementById("action-btn-row")?.remove();
+  document.querySelectorAll(".topic-btn").forEach(b => b.classList.remove("active"));
+  currentTopic = null;
+  currentVerse = null;
+
+  const input = document.getElementById("question-input");
+  input.value = "";
+  document.getElementById("char-hint").textContent = "";
+  document.getElementById("btn-ask").disabled = true;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  setTimeout(() => input.focus(), 300);
+
+  if (!currentUser) {
+    setTimeout(() => openLoginModal(), 600);
+  }
 }
 
 // ── Insight Logging ───────────────────────────────────────────────────────
