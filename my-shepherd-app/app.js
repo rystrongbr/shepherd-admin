@@ -196,15 +196,24 @@ async function goDeeperOnCurrent() {
   const prevRef = currentVerse?.ref || "";
   const question = document.getElementById("question-input").value.trim();
 
-  // Show loading in response
+  // Show active/loading state on button
+  const deeperBtn = document.getElementById("btn-go-deeper");
+  if (deeperBtn) {
+    deeperBtn.disabled = true;
+    deeperBtn.innerHTML = `<div class="dot-flashing" style="display:inline-flex;gap:4px;"><span></span><span></span><span></span></div> Going deeper…`;
+    deeperBtn.style.opacity = "0.85";
+  }
+
   isLoading = true;
   const content  = document.getElementById("response-content");
   const chips    = document.getElementById("follow-up-chips");
   const existing = document.getElementById("btn-share-verse");
   if (existing) existing.remove();
+  document.getElementById("action-btn-row")?.remove();
   chips.style.display = "none";
 
   content.innerHTML = `<div class="response-loading"><div class="dot-flashing"><span></span><span></span><span></span></div><p>Going deeper…</p></div>`;
+  document.getElementById("response-section").scrollIntoView({ behavior: "smooth", block: "start" });
 
   try {
     const aiData = await fetchDeeperResponse(currentTopic, question, prevRef);
@@ -255,19 +264,36 @@ function renderActionButtons() {
 }
 
 function handleNextQuestion() {
-  document.getElementById("response-section").style.display = "none";
-  document.getElementById("action-btn-row")?.remove();
-  document.querySelectorAll(".topic-btn").forEach(b => b.classList.remove("active"));
+  // Reset all state
+  isLoading = false;
   currentTopic = null;
   currentVerse = null;
 
+  // Hide response area + remove buttons
+  document.getElementById("response-section").style.display = "none";
+  document.getElementById("action-btn-row")?.remove();
+  document.getElementById("btn-share-verse")?.remove();
+  document.getElementById("follow-up-chips").style.display = "none";
+  document.getElementById("btn-ask-another").style.display = "none";
+
+  // Clear topic active states
+  document.querySelectorAll(".topic-btn").forEach(b => {
+    b.classList.remove("active");
+    b.disabled = false;
+  });
+
+  // Clear input
   const input = document.getElementById("question-input");
   input.value = "";
+  input.disabled = false;
   document.getElementById("char-hint").textContent = "";
   document.getElementById("btn-ask").disabled = true;
+
+  // Scroll to top and focus
   window.scrollTo({ top: 0, behavior: "smooth" });
   setTimeout(() => input.focus(), 300);
 
+  // Show sign-in prompt if not logged in
   if (!currentUser) {
     setTimeout(() => openLoginModal(), 600);
   }
