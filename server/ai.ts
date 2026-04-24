@@ -31,6 +31,32 @@ export interface AIResponse {
   followUpTopics: string[];
 }
 
+export async function getDeeperResponse(
+  topic: string,
+  question: string,
+  previousVerseRef: string
+): Promise<AIResponse> {
+  const userMessage = `The person already received ${previousVerseRef} on the topic of ${topic}${question ? ` with the question: "${question}"` : ""}. Now give them a DIFFERENT, deeper scripture passage that explores a new angle of this topic — perhaps a related theme, a complementary verse, or a more challenging perspective. Do not repeat the previous verse.`;
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user",   content: userMessage },
+    ],
+    temperature: 0.8,
+    max_tokens: 600,
+    response_format: { type: "json_object" },
+  });
+
+  const raw = completion.choices[0].message.content || "{}";
+  const parsed = JSON.parse(raw) as AIResponse;
+  if (!parsed.verse?.ref || !parsed.verse?.text || !parsed.reflection) {
+    throw new Error("AI returned incomplete response");
+  }
+  return parsed;
+}
+
 export async function getScriptureResponse(
   topic: string,
   question: string

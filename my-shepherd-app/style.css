@@ -832,3 +832,37 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ─── Go Deeper + Next Question ───────────────────────────── */
+.btn-go-deeper,
+.btn-next-question {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 0.83rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 10px;
+  margin-right: 8px;
+}
+
+.btn-go-deeper {
+  background: var(--brown);
+  color: #fff;
+  border: none;
+}
+.btn-go-deeper:hover { background: var(--brown-dark); }
+
+.btn-next-question {
+  background: none;
+  border: 1.5px solid var(--border);
+  color: var(--text-mid);
+}
+.btn-next-question:hover {
+  border-color: var(--brown);
+  color: var(--brown);
+}

@@ -184,6 +184,46 @@ async function fetchAIResponse(topic, question) {
   return res.json();
 }
 
+async function fetchDeeperResponse(topic, question, prevRef) {
+  const params = new URLSearchParams({ topic, question: question || "", prevRef: prevRef || "" });
+  const res = await fetch(`${API_BASE}/api/ai/deeper?${params.toString()}`);
+  if (!res.ok) throw new Error("Deeper request failed: " + res.status);
+  return res.json();
+}
+
+async function goDeeperOnCurrent() {
+  if (isLoading || !currentTopic) return;
+  const prevRef = currentVerse?.ref || "";
+  const question = document.getElementById("question-input").value.trim();
+
+  // Show loading in response
+  isLoading = true;
+  const content  = document.getElementById("response-content");
+  const chips    = document.getElementById("follow-up-chips");
+  const existing = document.getElementById("btn-share-verse");
+  if (existing) existing.remove();
+  chips.style.display = "none";
+
+  content.innerHTML = `<div class="response-loading"><div class="dot-flashing"><span></span><span></span><span></span></div><p>Going deeper…</p></div>`;
+
+  try {
+    const aiData = await fetchDeeperResponse(currentTopic, question, prevRef);
+    const verse      = aiData.verse      || getFallbackResponse(currentTopic).verse;
+    const reflection = aiData.reflection || getFallbackResponse(currentTopic).reflection;
+    const followUps  = aiData.followUpTopics || FOLLOW_UP[currentTopic] || [];
+    content.innerHTML = buildResponseHTML(currentTopic, question, verse, reflection);
+    renderFollowUpChipsFromList(followUps);
+    renderShareButton();
+    saveChatToHistory(currentTopic, question, verse, reflection);
+  } catch(err) {
+    const fallback = getFallbackResponse(currentTopic);
+    content.innerHTML = buildResponseHTML(currentTopic, question, fallback.verse, fallback.reflection);
+    renderFollowUpChips(currentTopic);
+    renderShareButton();
+  }
+  isLoading = false;
+}
+
 // ── Insight Logging ───────────────────────────────────────────────────────
 async function logInsight(topic, question = "") {
   try {

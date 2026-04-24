@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
-import { getScriptureResponse } from "./ai";
+import { getScriptureResponse, getDeeperResponse } from "./ai";
 import { insertMemberSchema, insertCampaignSchema, insertSequenceSchema, insertChurchSchema, insertInsightSchema, insertAffiliationSchema } from "@shared/schema";
 import {
   testConnection,
@@ -36,6 +36,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/churches/search",
     "/churches/nearby",
     "/ai/scripture",
+    "/ai/deeper",
     "/onboard",
     "/user/magic-link",
     "/user/verify",
@@ -236,7 +237,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   /**
    * GET /api/ai/scripture?topic=Anxiety&question=...
    * Same as POST but via GET so iframe sandbox fetch restrictions don't block it.
-   * The Perplexity iframe allows GET requests to external domains.
    */
   app.get("/api/ai/scripture", async (req, res) => {
     const topic = String(req.query.topic || "").trim();
@@ -247,6 +247,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(result);
     } catch (err: any) {
       console.error("AI scripture GET error:", err.message);
+      res.status(500).json({ error: "AI response failed", detail: err.message });
+    }
+  });
+
+  /**
+   * GET /api/ai/deeper?topic=Anxiety&question=...&prevRef=Philippians+4:6
+   * Returns a deeper, different scripture on the same topic.
+   */
+  app.get("/api/ai/deeper", async (req, res) => {
+    const topic    = String(req.query.topic    || "").trim();
+    const question = String(req.query.question || "").trim();
+    const prevRef  = String(req.query.prevRef  || "").trim();
+    if (!topic) return res.status(400).json({ error: "topic is required" });
+    try {
+      const result = await getDeeperResponse(topic, question, prevRef);
+      res.json(result);
+    } catch (err: any) {
+      console.error("AI deeper error:", err.message);
       res.status(500).json({ error: "AI response failed", detail: err.message });
     }
   });
