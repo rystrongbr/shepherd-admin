@@ -214,12 +214,14 @@ async function goDeeperOnCurrent() {
     content.innerHTML = buildResponseHTML(currentTopic, question, verse, reflection);
     renderFollowUpChipsFromList(followUps);
     renderShareButton();
+    renderActionButtons();
     saveChatToHistory(currentTopic, question, verse, reflection);
   } catch(err) {
     const fallback = getFallbackResponse(currentTopic);
     content.innerHTML = buildResponseHTML(currentTopic, question, fallback.verse, fallback.reflection);
     renderFollowUpChips(currentTopic);
     renderShareButton();
+    renderActionButtons();
   }
   isLoading = false;
   renderActionButtons();
@@ -493,6 +495,7 @@ async function showResponse(topic, question) {
     content.innerHTML = buildResponseHTML(topic, question, verse, reflection);
     renderFollowUpChipsFromList(followUps);
     renderShareButton();
+    renderActionButtons();
     saveChatToHistory(topic, question, verse, reflection);
   } catch (err) {
     console.error("AI error, using fallback:", err.message);
@@ -500,6 +503,7 @@ async function showResponse(topic, question) {
     content.innerHTML = buildResponseHTML(topic, question, fallback.verse, fallback.reflection);
     renderFollowUpChips(topic);
     renderShareButton();
+    renderActionButtons();
     saveChatToHistory(topic, question, fallback.verse, fallback.reflection);
   }
 
