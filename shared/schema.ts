@@ -38,6 +38,10 @@ export const members = sqliteTable("members", {
   joinedAt: text("joined_at").notNull().default(new Date().toISOString()),
   lastEngaged: text("last_engaged").notNull().default(new Date().toISOString()),
   notes: text("notes").notNull().default(""),
+  // Optional. Powers the Find-Your-Church lead-gen flow for members who
+  // sign up without an existing church affiliation. Synced to SendGrid as
+  // the home_zip custom field.
+  homeZip: text("home_zip").notNull().default(""),
   // Email module — populated by syncMember. Allows cheap webhook lookups (event
   // payloads include the SendGrid contact id but not the church id).
   sendgridContactId: text("sendgrid_contact_id").notNull().default(""),

@@ -434,8 +434,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         phone: member.phone,
         signupDate: member.joinedAt,
         lastEngagementDate: member.lastEngaged,
-        isVolunteer: member.segment === "volunteer",
-        isDonor:     member.segment === "donor",
+        homeZip: member.homeZip,
       }).catch(err => console.error("SendGrid sync error:", err));
     }
 
@@ -464,8 +463,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           phone: updated.phone,
           signupDate: updated.joinedAt,
           lastEngagementDate: updated.lastEngaged,
-          isVolunteer: req.body.segment === "volunteer",
-          isDonor:     req.body.segment === "donor",
+          homeZip: updated.homeZip,
         }).catch(err => console.error("SendGrid re-sync error:", err));
       }
     }
@@ -692,8 +690,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       phone: m.phone,
       signupDate: m.joinedAt,
       lastEngagementDate: m.lastEngaged,
-      isVolunteer: m.segment === "volunteer",
-      isDonor:     m.segment === "donor",
+      homeZip: m.homeZip,
     })));
 
     if (result.success) {

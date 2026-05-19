@@ -6,11 +6,13 @@
  *
  *   1. Custom fields on the SendGrid account (account-level, not list-level)
  *      so we can attach segment metadata to each contact.
- *      - church_segment      (text)   maps to members.segment
- *      - signup_date         (date)   maps to members.joinedAt
- *      - last_engagement_date (date)  maps to members.lastEngaged
- *      - is_volunteer        (number) 1/0
- *      - is_donor            (number) 1/0
+ *      - church_segment       (text)   maps to members.segment
+ *      - church_id            (number) tenant tag on every contact
+ *      - signup_date          (date)   maps to members.joinedAt
+ *      - last_engagement_date (date)   maps to members.lastEngaged
+ *      - home_zip             (text)   maps to members.homeZip; used for
+ *                                       Find-Your-Church lead-gen (see
+ *                                       product map). Optional per member.
  *
  *   2. A per-church Marketing Contacts list so we can target campaigns by
  *      church without leaking other tenants' contacts.
@@ -36,8 +38,7 @@ const CUSTOM_FIELDS: Array<{ name: string; type: "Text" | "Number" | "Date" }> =
   { name: "church_id",             type: "Number" }, // tenant tag on every contact
   { name: "signup_date",           type: "Date"   },
   { name: "last_engagement_date",  type: "Date"   },
-  { name: "is_volunteer",          type: "Number" },
-  { name: "is_donor",              type: "Number" },
+  { name: "home_zip",              type: "Text"   }, // optional; powers Find-Your-Church
 ];
 
 interface CustomFieldDefinition {

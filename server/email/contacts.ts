@@ -69,8 +69,7 @@ function buildContactBody({ member, churchId }: BuildContactOptions) {
   };
   if (member.signupDate)           customFields.signup_date           = toSendGridDate(member.signupDate);
   if (member.lastEngagementDate)   customFields.last_engagement_date  = toSendGridDate(member.lastEngagementDate);
-  if (member.isVolunteer !== undefined) customFields.is_volunteer = member.isVolunteer ? 1 : 0;
-  if (member.isDonor     !== undefined) customFields.is_donor     = member.isDonor     ? 1 : 0;
+  if (member.homeZip)              customFields.home_zip              = member.homeZip.trim();
 
   const contact: Record<string, unknown> = {
     email:      member.email.toLowerCase().trim(),

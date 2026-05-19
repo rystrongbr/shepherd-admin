@@ -190,6 +190,7 @@ addColumnIfMissing("churches", "sendgrid_provisioned_at",  "TEXT NOT NULL DEFAUL
 addColumnIfMissing("members",  "sendgrid_contact_id",      "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("members",  "unsubscribed_at",          "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("members",  "bounce_count",             "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("members",  "home_zip",                 "TEXT NOT NULL DEFAULT ''");
 
 // Seed demo data if empty
 const existingChurches = db.select().from(churches).all();

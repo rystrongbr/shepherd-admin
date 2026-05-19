@@ -26,9 +26,12 @@ export interface MemberPayload {
   signupDate?: string;
   /** ISO 8601. Updated by cron + webhook handlers. */
   lastEngagementDate?: string;
-  /** Convenience flags. Stored as bool custom fields in SendGrid. */
-  isVolunteer?: boolean;
-  isDonor?: boolean;
+  /**
+   * Optional. US zip code (or international equivalent). Used by the
+   * Find-Your-Church flow to suggest nearby churches for members who haven't
+   * affiliated yet. Stored as the SendGrid `home_zip` custom field.
+   */
+  homeZip?: string;
 }
 
 export interface CampaignPayload {
