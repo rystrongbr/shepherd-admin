@@ -12,6 +12,13 @@ export const churches = sqliteTable("churches", {
   primaryColor: text("primary_color").notNull().default("#7B4A1E"),
   sendgridApiKey: text("sendgrid_api_key").notNull().default(""),
   sendgridFromEmail: text("sendgrid_from_email").notNull().default(""),
+  // Email module — populated by the provisioning flow when a church is onboarded.
+  // sendgridListId        = the church-specific SendGrid Marketing Contacts list ID
+  // sendgridSenderId      = the verified single-sender ID resolved from fromEmail
+  // sendgridProvisionedAt = last successful provisioning timestamp (ISO)
+  sendgridListId: text("sendgrid_list_id").notNull().default(""),
+  sendgridSenderId: text("sendgrid_sender_id").notNull().default(""),
+  sendgridProvisionedAt: text("sendgrid_provisioned_at").notNull().default(""),
   status: text("status").notNull().default("active"), // active | inactive
 });
 
@@ -31,6 +38,11 @@ export const members = sqliteTable("members", {
   joinedAt: text("joined_at").notNull().default(new Date().toISOString()),
   lastEngaged: text("last_engaged").notNull().default(new Date().toISOString()),
   notes: text("notes").notNull().default(""),
+  // Email module — populated by syncMember. Allows cheap webhook lookups (event
+  // payloads include the SendGrid contact id but not the church id).
+  sendgridContactId: text("sendgrid_contact_id").notNull().default(""),
+  unsubscribedAt: text("unsubscribed_at").notNull().default(""),
+  bounceCount: integer("bounce_count").notNull().default(0),
 });
 
 export const insertMemberSchema = createInsertSchema(members).omit({ id: true });
@@ -151,3 +163,66 @@ export const chats = sqliteTable("chats", {
 export const insertChatSchema = createInsertSchema(chats).omit({ id: true });
 export type InsertChat = z.infer<typeof insertChatSchema>;
 export type Chat = typeof chats.$inferSelect;
+
+// ─── Email module tables ─────────────────────────────────────────────────────
+// These tables back the My Shepherd email product (server/email/).
+// They live in the shared schema for now but are owned by the email module —
+// when the module is extracted to its own service (Option 3), these tables
+// move with it. See server/email/README.md "Extraction Playbook".
+
+// Bible Topic Content — rotating library that powers the Mon/Wed/Fri devotional
+// cadence. Seeded with the 12 topics the My Shepherd app surfaces.
+export const bibleTopicContent = sqliteTable("bible_topic_content", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  topic: text("topic").notNull(), // e.g. "Anxiety", "Grief", "Hope"
+  verseRef: text("verse_ref").notNull().default(""),
+  verseText: text("verse_text").notNull().default(""),
+  reflection: text("reflection").notNull().default(""),
+  rotationOrder: integer("rotation_order").notNull().default(0), // round-robin position
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+
+export const insertBibleTopicContentSchema = createInsertSchema(bibleTopicContent).omit({ id: true });
+export type InsertBibleTopicContent = z.infer<typeof insertBibleTopicContentSchema>;
+export type BibleTopicContent = typeof bibleTopicContent.$inferSelect;
+
+// Sequence Enrollments — one row per (member, sequenceType) tracking which
+// onboarding steps have been sent. Cron uses this to send the next step
+// idempotently. status=active until completedAt is set.
+export const sequenceEnrollments = sqliteTable("sequence_enrollments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  churchId: integer("church_id").notNull(),
+  memberId: integer("member_id").notNull(),
+  sequenceType: text("sequence_type").notNull().default("onboarding"), // onboarding | reengagement
+  currentStep: integer("current_step").notNull().default(0), // 0 = welcome sent (day 1), 4 = final step (day 21)
+  lastSentAt: text("last_sent_at").notNull().default(""),
+  startedAt: text("started_at").notNull().default(new Date().toISOString()),
+  completedAt: text("completed_at").notNull().default(""),
+  status: text("status").notNull().default("active"), // active | completed | paused | cancelled
+});
+
+export const insertSequenceEnrollmentSchema = createInsertSchema(sequenceEnrollments).omit({ id: true });
+export type InsertSequenceEnrollment = z.infer<typeof insertSequenceEnrollmentSchema>;
+export type SequenceEnrollment = typeof sequenceEnrollments.$inferSelect;
+
+// Email Events — append-only log of every webhook event from SendGrid.
+// Lets us debug deliverability complaints and rebuild engagement state if needed.
+export const emailEvents = sqliteTable("email_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  churchId: integer("church_id"),
+  memberId: integer("member_id"),
+  sendgridContactId: text("sendgrid_contact_id").notNull().default(""),
+  sendgridMessageId: text("sendgrid_message_id").notNull().default(""),
+  email: text("email").notNull(),
+  eventType: text("event_type").notNull(), // delivered | open | click | bounce | dropped | unsubscribe | spamreport
+  url: text("url").notNull().default(""), // populated for click events
+  reason: text("reason").notNull().default(""), // populated for bounce/dropped
+  campaignId: text("campaign_id").notNull().default(""), // SendGrid single-send id if known
+  occurredAt: text("occurred_at").notNull().default(new Date().toISOString()),
+  rawPayload: text("raw_payload").notNull().default("{}"), // JSON string of the original event
+});
+
+export const insertEmailEventSchema = createInsertSchema(emailEvents).omit({ id: true });
+export type InsertEmailEvent = z.infer<typeof insertEmailEventSchema>;
+export type EmailEvent = typeof emailEvents.$inferSelect;
