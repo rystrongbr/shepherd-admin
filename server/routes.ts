@@ -13,8 +13,14 @@ import {
   getCampaignStats,
   buildDevotionalEmailHtml,
   buildWelcomeEmailHtml,
+  provisionChurch,
+  emailConfig,
   type SendGridConfig,
-} from "./sendgrid";
+} from "./email";
+// sgSendMail is module-private — routes.ts only uses it via these two
+// transactional helpers (magic-link + onboard notification). Phase B will
+// move them into server/email/transactional.ts so this import goes away.
+import { sgSendMail } from "./email/sendgrid-client";
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
 // Simple token-based auth for the admin dashboard.
@@ -88,21 +94,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const graceChurch = storage.getChurch(1);
       if (graceChurch?.sendgridApiKey) {
-        const sgMail = await import("@sendgrid/mail");
-        sgMail.default.setApiKey(graceChurch.sendgridApiKey);
-        await sgMail.default.send({
-          to: email,
-          from: { email: "ryan+shepherd@guacapp.com", name: "My Shepherd" },
-          subject: "Your My Shepherd sign-in link",
-          html: `
-            <div style="font-family:Georgia,serif;max-width:500px;margin:0 auto;background:#f5f0eb;padding:32px;border-radius:12px;">
-              <h2 style="color:#7B4A1E;margin:0 0 8px;">My Shepherd</h2>
-              <p style="color:#5A4A3A;margin:0 0 24px;">Click the button below to sign in. This link expires in 15 minutes.</p>
-              <a href="${magicUrl}" style="display:inline-block;background:#7B4A1E;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-family:Arial,sans-serif;font-weight:600;">Sign In to My Shepherd</a>
-              <p style="color:#9A8A7A;font-size:12px;margin-top:24px;font-family:Arial,sans-serif;">If you didn't request this, you can ignore this email.</p>
-            </div>
-          `,
-        });
+        await sgSendMail(
+          {
+            apiKey: graceChurch.sendgridApiKey,
+            fromEmail: "ryan+shepherd@guacapp.com",
+            fromName: "My Shepherd",
+          },
+          {
+            to: email,
+            subject: "Your My Shepherd sign-in link",
+            html: `
+              <div style="font-family:Georgia,serif;max-width:500px;margin:0 auto;background:#f5f0eb;padding:32px;border-radius:12px;">
+                <h2 style="color:#7B4A1E;margin:0 0 8px;">My Shepherd</h2>
+                <p style="color:#5A4A3A;margin:0 0 24px;">Click the button below to sign in. This link expires in 15 minutes.</p>
+                <a href="${magicUrl}" style="display:inline-block;background:#7B4A1E;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-family:Arial,sans-serif;font-weight:600;">Sign In to My Shepherd</a>
+                <p style="color:#9A8A7A;font-size:12px;margin-top:24px;font-family:Arial,sans-serif;">If you didn't request this, you can ignore this email.</p>
+              </div>
+            `,
+            categories: ["magic-link"],
+          },
+        );
       }
     } catch (emailErr: any) {
       console.error("Magic link email failed:", emailErr.message);
@@ -336,14 +347,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             <p style="margin-top:16px;">Log in to the <a href="https://www.perplexity.ai/computer/a/shepherd-admin-dist-public-is81K7zgQUqH6EjYmOaVOQ">admin dashboard</a> to view their profile.</p>
           `;
 
-          const sgMail = await import("@sendgrid/mail");
-          sgMail.default.setApiKey(sgConfig.apiKey);
-          await sgMail.default.send({
-            to: "ryan+shepherd@guacapp.com",
-            from: { email: sgConfig.fromEmail, name: "My Shepherd" },
-            subject: `New Church Signup: ${churchName}`,
-            html: notifyHtml,
-          });
+          await sgSendMail(
+            sgConfig,
+            {
+              to: "ryan+shepherd@guacapp.com",
+              subject: `New Church Signup: ${churchName}`,
+              html: notifyHtml,
+              categories: ["church-signup-notification"],
+            },
+          );
         }
       } catch (emailErr: any) {
         console.error("Notification email failed (non-fatal):", emailErr.message);
@@ -414,12 +426,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         fromEmail: church.sendgridFromEmail,
         fromName: church.name,
       };
-      syncMember(config, {
+      syncMember(config, church.id, {
         email: member.email,
         firstName: member.firstName,
         lastName: member.lastName,
         segment: member.segment,
         phone: member.phone,
+        signupDate: member.joinedAt,
+        lastEngagementDate: member.lastEngaged,
+        isVolunteer: member.segment === "volunteer",
+        isDonor:     member.segment === "donor",
       }).catch(err => console.error("SendGrid sync error:", err));
     }
 
@@ -440,12 +456,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           fromEmail: church.sendgridFromEmail,
           fromName: church.name,
         };
-        syncMember(config, {
+        syncMember(config, church.id, {
           email: updated.email,
           firstName: updated.firstName,
           lastName: updated.lastName,
           segment: req.body.segment,
           phone: updated.phone,
+          signupDate: updated.joinedAt,
+          lastEngagementDate: updated.lastEngaged,
+          isVolunteer: req.body.segment === "volunteer",
+          isDonor:     req.body.segment === "donor",
         }).catch(err => console.error("SendGrid re-sync error:", err));
       }
     }
@@ -598,6 +618,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ─── SendGrid Routes ───────────────────────────────────────────────────────
+  // Phase A note: new routes use the /api/email/* prefix. The legacy
+  // /api/sendgrid/* and /api/churches/:id/sendgrid/* routes remain for
+  // backwards-compat with the existing admin UI. They will be deprecated in
+  // Phase B once the UI moves to the new paths.
+
+  /**
+   * GET /api/email/status
+   * Returns the email module's runtime flags so the admin UI can show
+   * "Automation: OFF" / "Dry Run" banners.
+   */
+  app.get("/api/email/status", (_req, res) => {
+    res.json({
+      automationEnabled: emailConfig.automationEnabled,
+      dryRun: emailConfig.dryRun,
+      webhookConfigured: !!emailConfig.webhookPublicKey,
+      appUrl: emailConfig.appUrl,
+    });
+  });
+
+  /**
+   * POST /api/email/churches/:churchId/provision
+   * Idempotently provisions SendGrid state for a church:
+   *   - account custom fields
+   *   - per-church marketing contacts list
+   *   - verified sender lookup (writes senderId to the church row)
+   * Safe to call anytime; first run sets things up, subsequent runs no-op.
+   */
+  app.post("/api/email/churches/:churchId/provision", async (req, res) => {
+    const churchId = Number(req.params.churchId);
+    const result = await provisionChurch(churchId);
+    res.status(result.success ? 200 : 400).json(result);
+  });
 
   /**
    * POST /api/sendgrid/test
@@ -632,12 +684,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       fromName: church.name,
     };
 
-    const result = await syncAllMembers(config, members.map(m => ({
+    const result = await syncAllMembers(config, churchId, members.map(m => ({
       email: m.email,
       firstName: m.firstName,
       lastName: m.lastName,
       segment: m.segment,
       phone: m.phone,
+      signupDate: m.joinedAt,
+      lastEngagementDate: m.lastEngaged,
+      isVolunteer: m.segment === "volunteer",
+      isDonor:     m.segment === "donor",
     })));
 
     if (result.success) {
@@ -701,7 +757,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     // Use scheduledAt from request body (UI override) or campaign's stored value
     const scheduledAt = req.body.scheduledAt || campaign.scheduledAt || undefined;
 
-    const result = await createCampaign(config, {
+    const result = await createCampaign(config, church.id, {
       subject:     campaign.subject,
       previewText: campaign.previewText || "",
       fromName:    church.name,
