@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
 import { getScriptureResponse, getDeeperResponse } from "./ai";
+import { ask as askV2, drillDown as drillDownV2, isV2Configured } from "./ai-v2";
 import { insertMemberSchema, insertCampaignSchema, insertSequenceSchema, insertChurchSchema, insertInsightSchema, insertAffiliationSchema } from "@shared/schema";
 import {
   testConnection,
@@ -37,6 +38,8 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/churches/nearby",
     "/ai/scripture",
     "/ai/deeper",
+    "/ai/ask",
+    "/ai/passage",
     "/onboard",
     "/user/magic-link",
     "/user/verify",
@@ -265,6 +268,56 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(result);
     } catch (err: any) {
       console.error("AI deeper error:", err.message);
+      res.status(500).json({ error: "AI response failed", detail: err.message });
+    }
+  });
+
+  // ─── AI v2 (Sonnet, question-led, multi-citation) ───────────────────────
+  // These endpoints power the Stage A upgrade to Product 1. The legacy
+  // /api/ai/scripture and /api/ai/deeper endpoints above remain live as a
+  // rollback fallback during the soft-launch window (see Stage A PR).
+
+  /**
+   * GET /api/ai/ask?question=...&topicHint=Anxiety
+   * GET on purpose (iframe sandbox fetch restrictions can block POST).
+   * topicHint is optional and treated as soft context only — the question
+   * is the primary signal.
+   */
+  app.get("/api/ai/ask", async (req, res) => {
+    const question  = String(req.query.question  || "").trim();
+    const topicHint = String(req.query.topicHint || "").trim();
+    if (!question) return res.status(400).json({ error: "question is required" });
+    if (!isV2Configured()) {
+      return res.status(503).json({ error: "AI v2 not configured", detail: "ANTHROPIC_API_KEY is not set" });
+    }
+    try {
+      const result = await askV2({ question, topicHint });
+      res.json(result);
+    } catch (err: any) {
+      console.error("AI v2 ask error:", err.message);
+      res.status(500).json({ error: "AI response failed", detail: err.message });
+    }
+  });
+
+  /**
+   * GET /api/ai/passage?originalQuestion=...&passageRef=Philippians+4:6
+   * Drill-down: focused answer on a specific cited passage, in the
+   * context of the user's original question.
+   */
+  app.get("/api/ai/passage", async (req, res) => {
+    const originalQuestion = String(req.query.originalQuestion || "").trim();
+    const passageRef       = String(req.query.passageRef       || "").trim();
+    if (!originalQuestion || !passageRef) {
+      return res.status(400).json({ error: "originalQuestion and passageRef are required" });
+    }
+    if (!isV2Configured()) {
+      return res.status(503).json({ error: "AI v2 not configured", detail: "ANTHROPIC_API_KEY is not set" });
+    }
+    try {
+      const result = await drillDownV2({ originalQuestion, passageRef });
+      res.json(result);
+    } catch (err: any) {
+      console.error("AI v2 passage error:", err.message);
       res.status(500).json({ error: "AI response failed", detail: err.message });
     }
   });
