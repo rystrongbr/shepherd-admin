@@ -5,7 +5,14 @@
 
 // ── Backend URL ────────────────────────────────────────────────────────────
 // Always-on Railway backend — live 24/7
-const API_BASE = "https://app.myshepherdapp.church";
+// API_BASE: prefer same-origin when the page is served from a web host
+// (Railway preview, production, etc.) so backend calls go to the same
+// deployment. Falls back to the production host only when loaded via
+// file:// (rare local dev case). This lets PR previews actually exercise
+// the new server code instead of always hitting production.
+const API_BASE = (typeof window !== "undefined" && window.location && window.location.protocol !== "file:")
+  ? window.location.origin
+  : "https://app.myshepherdapp.church";
 
 // ── AI version flag ────────────────────────────────────────────────────────
 // Stage A soft launch: Sonnet 4.5 question-led multi-citation is the default.
