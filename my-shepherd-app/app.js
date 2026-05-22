@@ -24,6 +24,32 @@ const USE_AI_V2 = !window.location.hash.includes("v=1");
 // ── Session ID ────────────────────────────────────────────────────────────
 // Strategy: embed ?sid=<uuid> in the URL hash so it survives reloads
 // (localStorage/sessionStorage are blocked in sandboxed iframes).
+
+// In-memory chat history shim. Several call sites (v1 and v2 paths)
+// invoke saveChatToHistory(...) to persist a turn. There is no
+// persistent store on this client (iframe blocks localStorage), so
+// historically this function did not exist and calls threw
+// ReferenceError, silently corrupting the response render. Define it
+// as an in-memory log so all call sites succeed. If we add real
+// persistence later, swap the body — call signature stays the same.
+const _chatHistoryLog = [];
+function saveChatToHistory(topic, question, verseOrCitation, reflectionOrAnswer) {
+  try {
+    _chatHistoryLog.push({
+      ts: Date.now(),
+      topic: topic || null,
+      question: question || "",
+      verse: verseOrCitation || null,
+      reflection: reflectionOrAnswer || ""
+    });
+    // Keep memory bounded
+    if (_chatHistoryLog.length > 50) _chatHistoryLog.shift();
+  } catch (e) {
+    // never let history persistence break the response render
+    console.warn("saveChatToHistory failed:", e?.message);
+  }
+}
+
 function uuidv4() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
     const r = (Math.random() * 16) | 0;
