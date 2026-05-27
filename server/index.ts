@@ -91,12 +91,26 @@ app.use((req, res, next) => {
   if (process.env.NODE_ENV === "production") {
     // Serve My Shepherd static app at app.myshepherdapp.church
     const myShepherdPath = path.resolve(process.cwd(), "my-shepherd-app");
+    const fs = require("fs");
+
+    // Path-based access for previews / non-prod hosts: e.g. Railway PR previews
+    // hit https://<preview>.up.railway.app/my-shepherd/ to test Product 1.
+    // Production traffic still uses the hostname route below.
+    app.use("/my-shepherd", (req, res, next) => {
+      if (req.path.startsWith("/api")) return next();
+      const requested = req.path === "/" || req.path === "" ? "/index.html" : req.path;
+      const filePath = path.join(myShepherdPath, requested);
+      if (fs.existsSync(filePath) && !fs.statSync(filePath).isDirectory()) {
+        return res.sendFile(filePath);
+      }
+      return res.sendFile(path.join(myShepherdPath, "index.html"));
+    });
+
     app.use((req, res, next) => {
       const host = req.hostname || "";
       if (host === "app.myshepherdapp.church" || host === "www.myshepherdapp.church") {
         if (req.path.startsWith("/api")) return next();
         const filePath = path.join(myShepherdPath, req.path === "/" ? "index.html" : req.path);
-        const fs = require("fs");
         if (fs.existsSync(filePath) && !fs.statSync(filePath).isDirectory()) {
           return res.sendFile(filePath);
         }

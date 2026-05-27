@@ -5,11 +5,51 @@
 
 // ── Backend URL ────────────────────────────────────────────────────────────
 // Always-on Railway backend — live 24/7
-const API_BASE = "https://app.myshepherdapp.church";
+// API_BASE: prefer same-origin when the page is served from a web host
+// (Railway preview, production, etc.) so backend calls go to the same
+// deployment. Falls back to the production host only when loaded via
+// file:// (rare local dev case). This lets PR previews actually exercise
+// the new server code instead of always hitting production.
+const API_BASE = (typeof window !== "undefined" && window.location && window.location.protocol !== "file:")
+  ? window.location.origin
+  : "https://app.myshepherdapp.church";
+
+// ── AI version flag ────────────────────────────────────────────────────────
+// Stage A soft launch: Sonnet 4.5 question-led multi-citation is the default.
+// If the v2 endpoint errors, code falls back automatically to the legacy
+// /api/ai/scripture endpoint. To force the legacy path for testing, append
+// #v=1 to the URL.
+const USE_AI_V2 = !window.location.hash.includes("v=1");
 
 // ── Session ID ────────────────────────────────────────────────────────────
 // Strategy: embed ?sid=<uuid> in the URL hash so it survives reloads
 // (localStorage/sessionStorage are blocked in sandboxed iframes).
+
+// In-memory chat history shim. Several call sites (v1 and v2 paths)
+// invoke saveChatToHistory(...) to persist a turn. There is no
+// persistent store on this client (iframe blocks localStorage), so
+// historically this function did not exist and calls threw
+// ReferenceError, silently corrupting the response render. Define it
+// as an in-memory log so all call sites succeed. If we add real
+// persistence later, swap the body — call signature stays the same.
+const _chatHistoryLog = [];
+function saveChatToHistory(topic, question, verseOrCitation, reflectionOrAnswer) {
+  try {
+    _chatHistoryLog.push({
+      ts: Date.now(),
+      topic: topic || null,
+      question: question || "",
+      verse: verseOrCitation || null,
+      reflection: reflectionOrAnswer || ""
+    });
+    // Keep memory bounded
+    if (_chatHistoryLog.length > 50) _chatHistoryLog.shift();
+  } catch (e) {
+    // never let history persistence break the response render
+    console.warn("saveChatToHistory failed:", e?.message);
+  }
+}
+
 function uuidv4() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
     const r = (Math.random() * 16) | 0;
@@ -34,6 +74,12 @@ let churchId   = null;   // set after affiliation
 let churchName = null;
 let currentTopic = null;
 let isLoading  = false;
+let currentVerse = null;  // legacy v1 state — used by share button when on v1 path
+
+// v2 state — the user's most recent ask + its citations. Used by drill-down
+// and the share button. Null when on v1 path or before first ask.
+let v2LastQuestion  = null;
+let v2LastResponse  = null;  // shape: { answer, citations: [...], followUps: [...] }
 
 // ── Topics ────────────────────────────────────────────────────────────────
 const TOPICS = [
@@ -191,6 +237,96 @@ async function fetchDeeperResponse(topic, question, prevRef) {
   return res.json();
 }
 
+// ── v2 fetchers (Sonnet, question-led, multi-citation) ───────────────────────
+async function fetchV2Ask(question, topicHint) {
+  const params = new URLSearchParams({ question, topicHint: topicHint || "" });
+  const res = await fetch(`${API_BASE}/api/ai/ask?${params.toString()}`);
+  if (!res.ok) throw new Error("AI v2 request failed: " + res.status);
+  return res.json();
+}
+
+async function fetchV2Passage(originalQuestion, passageRef) {
+  const params = new URLSearchParams({ originalQuestion, passageRef });
+  const res = await fetch(`${API_BASE}/api/ai/passage?${params.toString()}`);
+  if (!res.ok) throw new Error("AI v2 passage request failed: " + res.status);
+  return res.json();
+}
+
+// HTML-escape user-controlled and model-returned strings before injecting
+// into innerHTML. Cheap and effective; keeps rendering simple.
+function esc(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Render a v2 response: pastoral answer first, then expandable citation
+// cards (each with relevance + KJV text + drill-down button), then follow-ups.
+function buildV2ResponseHTML(question, data) {
+  const citationsHTML = (data.citations || []).map((c, idx) => `
+    <details class="citation-card" data-idx="${idx}">
+      <summary class="citation-summary">
+        <span class="citation-ref">${esc(c.ref)}</span>
+        <span class="citation-relevance">${esc(c.relevance)}</span>
+      </summary>
+      <div class="citation-body">
+        <div class="citation-text">${esc(c.text)}</div>
+        <button class="btn-drill-down" data-ref="${esc(c.ref)}" data-testid="button-drill-${idx}">
+          Explore ${esc(c.ref)} further
+        </button>
+      </div>
+    </details>
+  `).join("");
+
+  return `
+    <div class="response-text v2">
+      ${question ? `<p class="v2-question">“${esc(question)}”</p>` : ""}
+      <div class="v2-answer">${esc(data.answer)}</div>
+      <div class="v2-citations-label">Drawn from</div>
+      <div class="v2-citations">${citationsHTML}</div>
+    </div>
+  `;
+}
+
+// Wire drill-down buttons after a v2 response is inserted into the DOM.
+function wireV2DrillDowns() {
+  document.querySelectorAll(".btn-drill-down").forEach(btn => {
+    btn.addEventListener("click", () => drillDownOnPassage(btn.dataset.ref));
+  });
+}
+
+async function drillDownOnPassage(passageRef) {
+  if (isLoading || !v2LastQuestion || !passageRef) return;
+  isLoading = true;
+
+  const content = document.getElementById("response-content");
+  const chips   = document.getElementById("follow-up-chips");
+  document.getElementById("action-btn-row")?.remove();
+  document.getElementById("btn-share-verse")?.remove();
+  chips.style.display = "none";
+
+  content.innerHTML = `<div class="response-loading"><div class="dot-flashing"><span></span><span></span><span></span></div><p>Exploring ${esc(passageRef)}…</p></div>`;
+  document.getElementById("response-section").scrollIntoView({ behavior: "smooth", block: "start" });
+
+  try {
+    const data = await fetchV2Passage(v2LastQuestion, passageRef);
+    v2LastResponse = data;
+    content.innerHTML = buildV2ResponseHTML(v2LastQuestion, data);
+    wireV2DrillDowns();
+    renderFollowUpChipsFromList(data.followUps || []);
+    renderShareButton();
+  } catch (err) {
+    console.error("v2 passage drill error:", err.message);
+    content.innerHTML = `<div class="response-error">Sorry, that passage couldn't be loaded right now. Please try again.</div>`;
+  }
+
+  isLoading = false;
+  renderActionButtons();
+}
+
 async function goDeeperOnCurrent() {
   if (isLoading || !currentTopic) return;
   const prevRef = currentVerse?.ref || "";
@@ -214,6 +350,31 @@ async function goDeeperOnCurrent() {
 
   content.innerHTML = `<div class="response-loading"><div class="dot-flashing"><span></span><span></span><span></span></div><p>Going deeper…</p></div>`;
   document.getElementById("response-section").scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // v2 path: re-ask the same question with a deeper framing, biased away
+  // from the passages we already showed. Falls back to v1 if v2 errors.
+  if (USE_AI_V2 && v2LastQuestion) {
+    try {
+      const priorRefs = (v2LastResponse?.citations || []).map(c => c.ref).join(", ");
+      const deeperQuestion = priorRefs
+        ? `${v2LastQuestion} — go deeper. Beyond ${priorRefs}, what else does scripture say?`
+        : `${v2LastQuestion} — go deeper. What else does scripture say?`;
+      const data = await fetchV2Ask(deeperQuestion, currentTopic);
+      v2LastQuestion = deeperQuestion;
+      v2LastResponse = data;
+      currentVerse = data.citations[0] ? { ref: data.citations[0].ref, text: data.citations[0].text } : null;
+      content.innerHTML = buildV2ResponseHTML(v2LastQuestion, data);
+      wireV2DrillDowns();
+      renderFollowUpChipsFromList(data.followUps || []);
+      renderShareButton();
+      if (currentVerse) saveChatToHistory(currentTopic, deeperQuestion, currentVerse, data.answer);
+      isLoading = false;
+      renderActionButtons();
+      return;
+    } catch (err) {
+      console.warn("v2 deeper failed, falling back to v1:", err.message);
+    }
+  }
 
   try {
     const aiData = await fetchDeeperResponse(currentTopic, question, prevRef);
@@ -266,6 +427,8 @@ function handleNextQuestion() {
   isLoading = false;
   currentTopic = null;
   currentVerse = null;
+  v2LastQuestion = null;
+  v2LastResponse = null;
 
   // Hide response area + remove buttons
   document.getElementById("response-section").style.display = "none";
@@ -481,6 +644,10 @@ function showChurchBadgeHeader() {
 }
 
 // ── Topic Selection ────────────────────────────────────────────────────────
+// In v2 mode chips PRE-FILL the text input (the user clicks Ask to submit).
+// This is the structural fix for the canned-response problem: chips become
+// suggestions, not categories. In v1 (rollback) mode chips still submit
+// directly, preserving the legacy UX in case we have to fall back.
 async function selectTopic(topic) {
   if (isLoading) return;
   currentTopic = topic;
@@ -490,8 +657,41 @@ async function selectTopic(topic) {
   const activeBtn = document.querySelector(`[data-topic="${topic}"]`);
   if (activeBtn) activeBtn.classList.add("active");
 
+  if (USE_AI_V2) {
+    // Pre-fill the input with a question template; user edits + clicks Ask.
+    const input = document.getElementById("question-input");
+    const suggestion = topicQuestionSuggestion(topic);
+    input.value = suggestion;
+    input.focus();
+    input.setSelectionRange(suggestion.length, suggestion.length);
+    document.getElementById("btn-ask").disabled = false;
+    document.getElementById("char-hint").textContent = `${suggestion.length} chars`;
+    return;
+  }
+
+  // Legacy v1 path: chip click submits directly
   await showResponse(topic, "");
   logInsight(topic, "");
+}
+
+// Map a topic chip label to a suggested question the user might want to ask.
+// Designed to feel like a real first-person question, not a category restatement.
+function topicQuestionSuggestion(topic) {
+  const map = {
+    "Anxiety":     "I'm feeling anxious about something specific — ",
+    "Forgiveness": "How do I forgive someone when ",
+    "Faith":       "My faith feels shaky right now because ",
+    "Prayer":      "I'm struggling with prayer because ",
+    "Peace":       "How can I find peace when ",
+    "Love":        "What does the Bible say about loving ",
+    "Hope":        "I'm losing hope about ",
+    "Temptation":  "I'm being tempted by ",
+    "Suffering":   "I'm going through ",
+    "Salvation":   "I have a question about salvation \u2014 ",
+    "Anger":       "I'm angry about ",
+    "Wisdom":      "I need wisdom about ",
+  };
+  return map[topic] || `Help me understand what the Bible says about ${topic.toLowerCase()} — `;
 }
 
 // ── Response Display ───────────────────────────────────────────────────────
@@ -504,12 +704,39 @@ async function showResponse(topic, question) {
   const askBtn   = document.getElementById("btn-ask-another");
 
   topicTag.innerHTML = `<span>${TOPICS.find(t => t.label === topic)?.emoji || "✝️"}</span> ${topic}`;
-  content.innerHTML = `<div class="response-loading"><div class="dot-flashing"><span></span><span></span><span></span></div><p>Finding scripture…</p></div>`;
+  content.innerHTML = `<div class="response-loading"><div class="dot-flashing"><span></span><span></span><span></span></div><p>${USE_AI_V2 ? "Searching scripture…" : "Finding scripture…"}</p></div>`;
   chips.style.display = "none";
   askBtn.style.display = "none";
   section.style.display = "block";
 
   setTimeout(() => section.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+
+  // v2 path: question-led, multi-citation, Sonnet 4.5.
+  // Only valid when there's actual question text — a topic with empty
+  // question on the v1 path means "surprise me" which v2 doesn't support.
+  if (USE_AI_V2 && question) {
+    try {
+      const data = await fetchV2Ask(question, topic);
+      v2LastQuestion = question;
+      v2LastResponse = data;
+      // currentVerse points to citation[0] so the existing share button
+      // shape still works for the most-relevant passage.
+      currentVerse = data.citations[0] ? { ref: data.citations[0].ref, text: data.citations[0].text } : null;
+      content.innerHTML = buildV2ResponseHTML(question, data);
+      wireV2DrillDowns();
+      renderFollowUpChipsFromList(data.followUps || []);
+      renderShareButton();
+      if (currentVerse) saveChatToHistory(topic, question, currentVerse, data.answer);
+      askBtn.style.display = "block";
+      isLoading = false;
+      renderActionButtons();
+      return;
+    } catch (err) {
+      // Fall through to legacy v1 path. Logged so we can spot regressions
+      // in the soft-launch window.
+      console.warn("v2 ask failed, falling back to v1:", err.message);
+    }
+  }
 
   try {
     const aiData = await fetchAIResponse(topic, question);
@@ -564,7 +791,10 @@ function renderFollowUpChipsFromList(followUps) {
 function renderShareButton() {
   const existing = document.getElementById("btn-share-verse");
   if (existing) existing.remove();
-  if (!currentVerse) return;
+  // v2: render whenever we have a response, even if citations are empty.
+  // v1: require currentVerse (existing behavior).
+  const hasV2 = USE_AI_V2 && v2LastResponse && v2LastResponse.answer;
+  if (!hasV2 && !currentVerse) return;
 
   const btn = document.createElement("button");
   btn.id = "btn-share-verse";
@@ -575,7 +805,7 @@ function renderShareButton() {
       <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
       <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
     </svg>
-    Share this verse
+    ${USE_AI_V2 && v2LastResponse ? "Share this answer" : "Share this verse"}
   `;
   btn.addEventListener("click", shareVerse);
 
@@ -584,15 +814,32 @@ function renderShareButton() {
   chips.parentNode.insertBefore(btn, chips);
 }
 
-async function shareVerse() {
-  if (!currentVerse) return;
-  const text = `"${currentVerse.text}" — ${currentVerse.ref}
+// Build the share payload. On v2, include the pastoral answer + top 2
+// citations + link back to My Shepherd. On v1, keep the single-verse format.
+function buildShareText() {
+  const APP_URL = "https://www.myshepherdapp.church";
+  if (USE_AI_V2 && v2LastResponse && v2LastResponse.answer) {
+    const answer = v2LastResponse.answer.trim();
+    const top = (v2LastResponse.citations || []).slice(0, 2);
+    const citationLines = top.map(c => `"${c.text}" — ${c.ref}`).join("\n\n");
+    return [
+      answer,
+      citationLines,
+      `From My Shepherd: ${APP_URL}`
+    ].filter(Boolean).join("\n\n");
+  }
+  if (!currentVerse) return "";
+  return `"${currentVerse.text}" — ${currentVerse.ref}\n\nFrom My Shepherd: ${APP_URL}`;
+}
 
-From My Shepherd: https://www.perplexity.ai/computer/a/my-shepherd-3ArzyJ0SRA25IpdOKoTgOA`;
+async function shareVerse() {
+  const text = buildShareText();
+  if (!text) return;
+  const title = (USE_AI_V2 && v2LastResponse) ? "My Shepherd — Answer & Scripture" : "My Shepherd — Scripture";
 
   if (navigator.share) {
     try {
-      await navigator.share({ title: "My Shepherd — Scripture", text });
+      await navigator.share({ title, text });
       return;
     } catch (e) { /* fall through to clipboard */ }
   }
@@ -613,7 +860,10 @@ From My Shepherd: https://www.perplexity.ai/computer/a/my-shepherd-3ArzyJ0SRA25I
     }
   } catch (e) {
     // Last resort: open a pre-filled share URL
-    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(currentVerse.text.slice(0,200) + " — " + currentVerse.ref + " (via @MyShepherdApp)")}`, "_blank", "noopener");
+    const tweetText = (USE_AI_V2 && v2LastResponse?.answer)
+      ? v2LastResponse.answer.slice(0, 240) + " (via @MyShepherdApp)"
+      : (currentVerse ? currentVerse.text.slice(0,200) + " — " + currentVerse.ref + " (via @MyShepherdApp)" : "");
+    if (tweetText) window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`, "_blank", "noopener");
   }
 }
 
