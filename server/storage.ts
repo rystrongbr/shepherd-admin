@@ -206,9 +206,17 @@ addColumnIfMissing("members",  "unsubscribed_at",          "TEXT NOT NULL DEFAUL
 addColumnIfMissing("members",  "bounce_count",             "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("members",  "home_zip",                 "TEXT NOT NULL DEFAULT ''");
 
-// Seed demo data if empty
-const existingChurches = db.select().from(churches).all();
-if (existingChurches.length === 0) {
+// Seed demo data. Extracted into a function so the /api/demo/reset endpoint
+// can call it after wiping. Called at boot only when ALLOW_DEMO_SEED=true AND
+// the DB is empty. Production never sets ALLOW_DEMO_SEED, so production stays
+// clean. Idempotent guard: bails out if any churches already exist.
+export function runDemoSeed(): { inserted: { churches: number; members: number; campaigns: number; sequences: number; activities: number; insights: number } } {
+  const existing = db.select().from(churches).all();
+  if (existing.length > 0) {
+    console.log("[demoSeed] Skipping — churches already exist.");
+    return { inserted: { churches: 0, members: 0, campaigns: 0, sequences: 0, activities: 0, insights: 0 } };
+  }
+  console.log("[demoSeed] Running seed: Grace Community Church + 20 members + 6 campaigns + 3 sequences + activities + insights.");
   // Insert demo church
   const church = db.insert(churches).values({
     name: "Grace Community Church",
@@ -297,6 +305,7 @@ if (existingChurches.length === 0) {
   const locations = ["Austin, TX", "Houston, TX", "Dallas, TX", "San Antonio, TX", ""];
   const sessions = ["s1","s2","s3","s4","s5","s6","s7","s8","s9","s10"];
   let seedIdx = 0;
+  let insightCount = 0;
   for (const { topic, count } of topicSeeds) {
     for (let i = 0; i < count; i++) {
       const daysAgo = Math.floor(Math.random() * 30);
@@ -310,8 +319,26 @@ if (existingChurches.length === 0) {
         createdAt,
       }).run();
       seedIdx++;
+      insightCount++;
     }
   }
+
+  console.log(`[demoSeed] Complete: 1 church, 20 members, ${campaignData.length} campaigns, ${seqData.length} sequences, ${activityData.length} activities, ${insightCount} insights.`);
+  return {
+    inserted: {
+      churches: 1,
+      members: 20,
+      campaigns: campaignData.length,
+      sequences: seqData.length,
+      activities: activityData.length,
+      insights: insightCount,
+    },
+  };
+}
+
+// Run the seed at boot if ALLOW_DEMO_SEED=true. Production never sets this.
+if (process.env.ALLOW_DEMO_SEED === "true") {
+  runDemoSeed();
 }
 
 export interface IStorage {
