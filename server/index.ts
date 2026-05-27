@@ -108,6 +108,15 @@ app.use((req, res, next) => {
 
     app.use((req, res, next) => {
       const host = req.hostname || "";
+
+      // Admin subdomain: serve ONLY the admin SPA via serveStatic below.
+      // Skip the Product 1 hostname fallback so /api routes work and the
+      // admin React app is served at the root of admin.myshepherdapp.church.
+      if (host === "admin.myshepherdapp.church") {
+        return next();
+      }
+
+      // Consumer domains: serve Product 1 static app for all non-API paths.
       if (host === "app.myshepherdapp.church" || host === "www.myshepherdapp.church") {
         if (req.path.startsWith("/api")) return next();
         const filePath = path.join(myShepherdPath, req.path === "/" ? "index.html" : req.path);
@@ -118,7 +127,7 @@ app.use((req, res, next) => {
       }
       next();
     });
-    // Serve admin dashboard for all other hosts
+    // Serve admin dashboard for all other hosts (including admin.myshepherdapp.church)
     serveStatic(app);
   } else {
     const { setupVite } = await import("./vite");
