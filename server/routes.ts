@@ -72,6 +72,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ─── Health check (Railway / uptime monitors) ────────────────────────────
   app.get("/api/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
+  // ─── Demo Environment: Reset & Status ────────────────────────────────────
+  // These endpoints exist ONLY in the demo environment. Production never sets
+  // ALLOW_DEMO_RESET, so the endpoint returns 404 there. Auth is still required
+  // (admin Bearer token) on top of the env gate so a leaked demo URL can't
+  // wipe data without the admin password.
+
+  app.get("/api/demo/status", (_req, res) => {
+    res.json({
+      isDemoEnv: process.env.ALLOW_DEMO_SEED === "true",
+      resetEnabled: process.env.ALLOW_DEMO_RESET === "true",
+      seedEnabled: process.env.ALLOW_DEMO_SEED === "true",
+    });
+  });
+
+  app.post("/api/demo/reset", async (_req, res) => {
+    if (process.env.ALLOW_DEMO_RESET !== "true") {
+      return res.status(404).json({ error: "Not found" });
+    }
+    try {
+      const { resetDemoData } = await import("./demoReset.js");
+      const result = resetDemoData();
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[demo/reset] failed:", err);
+      res.status(500).json({ ok: false, error: String(err?.message || err) });
+    }
+  });
+
   // ─── App User Auth (Magic Link + Google) ────────────────────────────
 
   /**
