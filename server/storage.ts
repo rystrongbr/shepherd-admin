@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { eq, and, desc, sql, gte, isNull, or } from "drizzle-orm";
 import {
   churches, members, campaigns, sequences, activities, insights, affiliations, appUsers, chats,
+  bibleTopicContent, sequenceEnrollments, emailEvents,
   type Church, type InsertChurch,
   type Member, type InsertMember,
   type Campaign, type InsertCampaign,
@@ -12,6 +13,9 @@ import {
   type Affiliation, type InsertAffiliation,
   type AppUser, type InsertAppUser,
   type Chat, type InsertChat,
+  type BibleTopicContent, type InsertBibleTopicContent,
+  type SequenceEnrollment, type InsertSequenceEnrollment,
+  type EmailEvent, type InsertEmailEvent,
 } from "@shared/schema";
 
 const sqlite = new Database("shepherd.db");
@@ -123,7 +127,70 @@ sqlite.exec(`
     reflection TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- ─── Email module tables (owned by server/email/) ─────────────────────────
+  CREATE TABLE IF NOT EXISTS bible_topic_content (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT NOT NULL,
+    verse_ref TEXT NOT NULL DEFAULT '',
+    verse_text TEXT NOT NULL DEFAULT '',
+    reflection TEXT NOT NULL DEFAULT '',
+    rotation_order INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS sequence_enrollments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    church_id INTEGER NOT NULL,
+    member_id INTEGER NOT NULL,
+    sequence_type TEXT NOT NULL DEFAULT 'onboarding',
+    current_step INTEGER NOT NULL DEFAULT 0,
+    last_sent_at TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active'
+  );
+  CREATE INDEX IF NOT EXISTS idx_seq_enroll_member ON sequence_enrollments (member_id, sequence_type);
+  CREATE INDEX IF NOT EXISTS idx_seq_enroll_active ON sequence_enrollments (status, last_sent_at);
+
+  CREATE TABLE IF NOT EXISTS email_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    church_id INTEGER,
+    member_id INTEGER,
+    sendgrid_contact_id TEXT NOT NULL DEFAULT '',
+    sendgrid_message_id TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    url TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    campaign_id TEXT NOT NULL DEFAULT '',
+    occurred_at TEXT NOT NULL DEFAULT (datetime('now')),
+    raw_payload TEXT NOT NULL DEFAULT '{}'
+  );
+  CREATE INDEX IF NOT EXISTS idx_email_events_email   ON email_events (email);
+  CREATE INDEX IF NOT EXISTS idx_email_events_type    ON email_events (event_type, occurred_at);
+  CREATE INDEX IF NOT EXISTS idx_email_events_member  ON email_events (member_id);
 `);
+
+// ─── Additive column migrations (email module) ───────────────────────────────
+// SQLite ALTER TABLE ADD COLUMN is not idempotent — it errors if the column
+// already exists. We swallow that specific error so the boot is safe to repeat.
+function addColumnIfMissing(table: string, column: string, ddl: string) {
+  try {
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl};`);
+  } catch (err: any) {
+    if (!/duplicate column name/i.test(err?.message || "")) throw err;
+  }
+}
+
+addColumnIfMissing("churches", "sendgrid_list_id",         "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("churches", "sendgrid_sender_id",       "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("churches", "sendgrid_provisioned_at",  "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("members",  "sendgrid_contact_id",      "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("members",  "unsubscribed_at",          "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("members",  "bounce_count",             "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("members",  "home_zip",                 "TEXT NOT NULL DEFAULT ''");
 
 // Seed demo data if empty
 const existingChurches = db.select().from(churches).all();
@@ -289,6 +356,29 @@ export interface IStorage {
   saveChat(data: InsertChat): Chat;
   getUserChats(userId: number, limit?: number): Chat[];
   searchUserChats(userId: number, query: string): Chat[];
+
+  // ─── Email module ───────────────────────────────────────────────────────────
+  // These methods are the ONLY surface the server/email/ module is allowed to
+  // call on storage. See server/email/data.ts (the email module's repository
+  // layer) — it wraps these. Do not call email tables directly from outside
+  // server/email/.
+
+  // Bible topic content (rotation library)
+  getBibleTopicContent(activeOnly?: boolean): BibleTopicContent[];
+  getNextRotationTopic(): BibleTopicContent | undefined;
+  upsertBibleTopicContent(data: InsertBibleTopicContent): BibleTopicContent;
+  bumpRotationOrder(id: number): void;
+
+  // Sequence enrollments
+  getEnrollment(memberId: number, sequenceType: string): SequenceEnrollment | undefined;
+  createEnrollment(data: InsertSequenceEnrollment): SequenceEnrollment;
+  updateEnrollment(id: number, data: Partial<InsertSequenceEnrollment>): SequenceEnrollment | undefined;
+  listActiveEnrollmentsDue(sequenceType: string, sinceIso: string): SequenceEnrollment[];
+
+  // Email events (webhook log)
+  recordEmailEvent(data: InsertEmailEvent): EmailEvent;
+  getMemberByEmail(email: string): Member | undefined;
+  getMemberBySendgridContactId(contactId: string): Member | undefined;
 }
 
 export const storage: IStorage = {
@@ -430,5 +520,81 @@ export const storage: IStorage = {
       .orderBy(desc(chats.createdAt))
       .limit(30)
       .all();
+  },
+
+  // ─── Email module ───────────────────────────────────────────────────────────
+  getBibleTopicContent: (activeOnly = true) => {
+    if (activeOnly) {
+      return db.select().from(bibleTopicContent)
+        .where(eq(bibleTopicContent.active, true))
+        .orderBy(bibleTopicContent.rotationOrder)
+        .all();
+    }
+    return db.select().from(bibleTopicContent).orderBy(bibleTopicContent.rotationOrder).all();
+  },
+
+  getNextRotationTopic: () =>
+    db.select().from(bibleTopicContent)
+      .where(eq(bibleTopicContent.active, true))
+      .orderBy(bibleTopicContent.rotationOrder)
+      .limit(1)
+      .get(),
+
+  upsertBibleTopicContent: (data) => {
+    const existing = db.select().from(bibleTopicContent)
+      .where(eq(bibleTopicContent.topic, data.topic))
+      .get();
+    if (existing) {
+      return db.update(bibleTopicContent).set(data).where(eq(bibleTopicContent.id, existing.id)).returning().get()!;
+    }
+    return db.insert(bibleTopicContent).values(data).returning().get();
+  },
+
+  bumpRotationOrder: (id) => {
+    // Move this topic to the end of the rotation
+    const maxOrder = db.select({ max: sql<number>`COALESCE(MAX(${bibleTopicContent.rotationOrder}), 0)` })
+      .from(bibleTopicContent)
+      .get()?.max ?? 0;
+    db.update(bibleTopicContent)
+      .set({ rotationOrder: maxOrder + 1 })
+      .where(eq(bibleTopicContent.id, id))
+      .run();
+  },
+
+  getEnrollment: (memberId, sequenceType) =>
+    db.select().from(sequenceEnrollments)
+      .where(and(
+        eq(sequenceEnrollments.memberId, memberId),
+        eq(sequenceEnrollments.sequenceType, sequenceType),
+      ))
+      .get(),
+
+  createEnrollment: (data) => db.insert(sequenceEnrollments).values(data).returning().get(),
+
+  updateEnrollment: (id, data) =>
+    db.update(sequenceEnrollments).set(data).where(eq(sequenceEnrollments.id, id)).returning().get(),
+
+  listActiveEnrollmentsDue: (sequenceType, sinceIso) =>
+    db.select().from(sequenceEnrollments)
+      .where(and(
+        eq(sequenceEnrollments.sequenceType, sequenceType),
+        eq(sequenceEnrollments.status, "active"),
+        // due if lastSentAt is empty OR lastSentAt < sinceIso (caller passes the
+        // cutoff for whatever step interval is next, e.g. 48h ago for step 2)
+        or(
+          eq(sequenceEnrollments.lastSentAt, ""),
+          sql`${sequenceEnrollments.lastSentAt} < ${sinceIso}`,
+        ),
+      ))
+      .all(),
+
+  recordEmailEvent: (data) => db.insert(emailEvents).values(data).returning().get(),
+
+  getMemberByEmail: (email) =>
+    db.select().from(members).where(eq(members.email, email.toLowerCase())).get(),
+
+  getMemberBySendgridContactId: (contactId) => {
+    if (!contactId) return undefined;
+    return db.select().from(members).where(eq(members.sendgridContactId, contactId)).get();
   },
 };
