@@ -1,6 +1,8 @@
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, and, desc, sql, gte, isNull, or } from "drizzle-orm";
+import * as fs from "fs";
+import * as path from "path";
 import {
   churches, members, campaigns, sequences, activities, insights, affiliations, appUsers, chats,
   bibleTopicContent, sequenceEnrollments, emailEvents,
@@ -18,7 +20,19 @@ import {
   type EmailEvent, type InsertEmailEvent,
 } from "@shared/schema";
 
-const sqlite = new Database("shepherd.db");
+// DB_PATH allows the database file to live on a persistent volume in production.
+// In Railway we set DB_PATH=/data/shepherd.db and attach a Volume at /data.
+// Locally and in tests, defaults to ./shepherd.db.
+const DB_PATH = process.env.DB_PATH || "shepherd.db";
+
+// Ensure the directory exists (important for /data on first boot).
+const dbDir = path.dirname(DB_PATH);
+if (dbDir && dbDir !== "." && !fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+
+console.log(`[storage] Using SQLite database at: ${DB_PATH}`);
+const sqlite = new Database(DB_PATH);
 export const db = drizzle(sqlite);
 
 // Create tables
