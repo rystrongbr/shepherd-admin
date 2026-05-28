@@ -9,7 +9,7 @@
 // in sync — if storage.ts seed adds new tables, add the corresponding DELETE
 // statement here.
 
-import { db, runDemoSeed } from "./storage.js";
+import { db, sqlite, runDemoSeed } from "./storage.js";
 import {
   churches, members, campaigns, sequences, activities, insights,
   affiliations, appUsers, chats, bibleTopicContent,
@@ -43,6 +43,20 @@ export function resetDemoData(): {
   for (const { name, table } of tablesInOrder) {
     const result = db.delete(table).run();
     wiped[name] = result.changes;
+  }
+
+  // Reset SQLite autoincrement counters so re-seeded rows get id=1 again.
+  // Without this, the frontend (which hardcodes /api/churches/1/...) breaks
+  // after every reset because the church gets a new id.
+  // sqlite_sequence is a system table SQLite maintains for AUTOINCREMENT.
+  // The DELETE pattern is the standard way to reset the counter.
+  try {
+    sqlite.exec("DELETE FROM sqlite_sequence");
+    console.log("[demoReset] Reset autoincrement counters via sqlite_sequence wipe.");
+  } catch (err) {
+    // sqlite_sequence only exists if any AUTOINCREMENT column has been used.
+    // If it doesn't exist, that's fine — means there's nothing to reset.
+    console.log("[demoReset] sqlite_sequence wipe skipped:", String((err as any)?.message || err));
   }
 
   console.log("[demoReset] Wiped:", wiped);

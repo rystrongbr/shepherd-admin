@@ -34,6 +34,8 @@ if (dbDir && dbDir !== "." && !fs.existsSync(dbDir)) {
 console.log(`[storage] Using SQLite database at: ${DB_PATH}`);
 const sqlite = new Database(DB_PATH);
 export const db = drizzle(sqlite);
+// Export raw handle for cases that need raw SQL (e.g. demoReset wipes sqlite_sequence).
+export { sqlite };
 
 // Create tables
 sqlite.exec(`
