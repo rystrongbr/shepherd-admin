@@ -230,3 +230,58 @@ export const emailEvents = sqliteTable("email_events", {
 export const insertEmailEventSchema = createInsertSchema(emailEvents).omit({ id: true });
 export type InsertEmailEvent = z.infer<typeof insertEmailEventSchema>;
 export type EmailEvent = typeof emailEvents.$inferSelect;
+
+// ─── Donations module ────────────────────────────────────────────────────────
+// Powers the soft donation popup in app.myshepherdapp.church. v1 is one-time
+// donations only (no recurring) — see my_shepherd_gtm_plan.md for cadence spec.
+
+// Chat Reactions — "this helped" / "not for me" feedback on AI responses.
+// Used as the primary value-moment signal for the donation prompt trigger
+// AND as a quality signal for AI response tuning.
+export const chatReactions = sqliteTable("chat_reactions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  chatId: integer("chat_id").notNull(), // FK to chats.id
+  reaction: text("reaction").notNull(), // 'helped' | 'not_helpful'
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+
+export const insertChatReactionSchema = createInsertSchema(chatReactions).omit({ id: true });
+export type InsertChatReaction = z.infer<typeof insertChatReactionSchema>;
+export type ChatReaction = typeof chatReactions.$inferSelect;
+
+// Donation Prompts — log of every prompt shown to a user (so we can enforce
+// the cadence rules: 14-day cooldown, 3-strikes-then-60-day-pause, etc.)
+export const donationPrompts = sqliteTable("donation_prompts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  trigger: text("trigger").notNull(), // 'reaction_helped' | 'manual_button' | 'share' | 'long_chat'
+  outcome: text("outcome").notNull().default("shown"), // 'shown' | 'dismissed' | 'donated' | 'maybe_later' | 'opt_out'
+  shownAt: text("shown_at").notNull().default(new Date().toISOString()),
+  outcomeAt: text("outcome_at").notNull().default(""),
+});
+
+export const insertDonationPromptSchema = createInsertSchema(donationPrompts).omit({ id: true });
+export type InsertDonationPrompt = z.infer<typeof insertDonationPromptSchema>;
+export type DonationPrompt = typeof donationPrompts.$inferSelect;
+
+// Donations — one row per completed Stripe Checkout. v1 is one-time only;
+// the frequency column is reserved for v1.1 recurring support.
+export const donations = sqliteTable("donations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id"), // nullable — anonymous donations are allowed
+  email: text("email").notNull().default(""), // captured from Stripe even if anon
+  stripeSessionId: text("stripe_session_id").notNull().unique(),
+  stripePaymentIntentId: text("stripe_payment_intent_id").notNull().default(""),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("usd"),
+  frequency: text("frequency").notNull().default("one_time"), // 'one_time' | 'weekly' (v1.1+)
+  status: text("status").notNull().default("pending"), // 'pending' | 'completed' | 'failed' | 'refunded'
+  promptId: integer("prompt_id"), // FK to donation_prompts.id (which prompt led to this gift)
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+  completedAt: text("completed_at").notNull().default(""),
+});
+
+export const insertDonationSchema = createInsertSchema(donations).omit({ id: true });
+export type InsertDonation = z.infer<typeof insertDonationSchema>;
+export type Donation = typeof donations.$inferSelect;

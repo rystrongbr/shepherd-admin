@@ -981,3 +981,89 @@ body {
   font-size: 0.88rem;
   line-height: 1.5;
 }
+
+/* ── Reaction buttons (donations v1) ───────────────────────────────────── */
+.btn-reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #FFFFFF;
+  color: var(--brown);
+  border: 1px solid #D4B896;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 0.82rem;
+  font-family: Inter, sans-serif;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-reaction:hover:not(:disabled) {
+  background: #f5f0eb;
+  border-color: var(--brown);
+}
+.btn-reaction:disabled {
+  cursor: default;
+}
+.btn-reaction-secondary {
+  color: var(--text-mid, #5A4A3A);
+}
+.btn-reaction-selected {
+  background: var(--brown) !important;
+  color: #FFFFFF !important;
+  border-color: var(--brown) !important;
+  opacity: 1 !important;
+}
+
+/* ── Donation amount buttons ───────────────────────────────────────────── */
+.donation-amount-btn {
+  flex: 1;
+  background: #FFFFFF;
+  color: var(--brown);
+  border: 2px solid #D4B896;
+  border-radius: 10px;
+  padding: 14px 8px;
+  font-size: 1.05rem;
+  font-family: Inter, sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.donation-amount-btn:hover {
+  border-color: var(--brown);
+  background: #f5f0eb;
+}
+.donation-amount-selected {
+  background: var(--brown) !important;
+  color: #FFFFFF !important;
+  border-color: var(--brown) !important;
+}
+
+/* ── Header donation heart ─────────────────────────────────────────────── */
+.btn-donate-heart {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid #D4B896;
+  border-radius: 999px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+  padding: 0;
+  margin-right: 8px;
+  transition: all 0.15s ease;
+}
+.btn-donate-heart:hover {
+  background: #f5f0eb;
+  border-color: var(--brown);
+  transform: scale(1.05);
+}
+.btn-donate-heart:active {
+  transform: scale(0.98);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
