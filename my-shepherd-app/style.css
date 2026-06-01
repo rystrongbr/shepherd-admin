@@ -1067,3 +1067,28 @@ body {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Site footer (legal disclosure) ─────────────────────────────────────── */
+.site-footer {
+  margin-top: 48px;
+  padding: 18px 16px 28px;
+  border-top: 1px solid var(--border-light, #E8DCC8);
+  background: transparent;
+}
+.site-footer-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: center;
+  color: var(--text-light, #9A8A7A);
+  font-family: Inter, sans-serif;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  align-items: center;
+}
+.site-footer-sep {
+  opacity: 0.5;
+}

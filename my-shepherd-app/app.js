@@ -1344,8 +1344,8 @@ async function showDonationModal(trigger) {
         <svg width="42" height="42" viewBox="0 0 24 24" fill="#7B4A1E" aria-hidden="true" style="margin:0 auto;display:block;">
           <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
         </svg>
-        <h2 class="modal-title">Help keep My Shepherd free</h2>
-        <p class="modal-subtitle">A one-time gift helps us keep scripture accessible to anyone, anywhere — with no paywalls.</p>
+        <h2 class="modal-title">Support My Shepherd</h2>
+        <p class="modal-subtitle">Your one-time contribution helps us keep scripture accessible to anyone, anywhere — with no paywalls.</p>
       </div>
       <div id="donation-amount-row" style="display:flex;gap:10px;justify-content:center;margin:18px 0 12px;">
         ${amountButtons}
@@ -1360,7 +1360,7 @@ async function showDonationModal(trigger) {
         <button id="btn-donate-maybe-later" class="btn-ghost" data-testid="button-donate-maybe-later" style="flex:1;">Maybe later</button>
         <button id="btn-donate-opt-out" class="btn-ghost" data-testid="button-donate-opt-out" style="flex:1;font-size:0.78rem;color:var(--text-light,#9A8A7A);">Don't ask again</button>
       </div>
-      <p style="text-align:center;color:var(--text-light,#9A8A7A);font-size:0.72rem;margin-top:14px;font-family:Inter,sans-serif;">Secured by Stripe · You'll get a receipt by email</p>
+      <p style="text-align:center;color:var(--text-light,#9A8A7A);font-size:0.72rem;margin-top:14px;font-family:Inter,sans-serif;line-height:1.5;">Secured by Stripe · Receipt sent by email<br/><span style="font-size:0.68rem;">My Shepherd is operated by Bar Above LLC. Contributions are not tax-deductible.</span></p>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -1469,7 +1469,7 @@ function showDonationThankYou() {
         <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
       </svg>
       <h2 class="modal-title" style="margin-bottom:8px;">Thank you</h2>
-      <p class="modal-subtitle" style="margin-bottom:20px;">Your gift keeps My Shepherd free for everyone. We'll email your receipt shortly.</p>
+      <p class="modal-subtitle" style="margin-bottom:20px;">Your support keeps My Shepherd free for everyone. We'll email your receipt shortly.</p>
       <button id="btn-thanks-close" class="btn-primary">Continue exploring</button>
     </div>
   `;
