@@ -194,6 +194,15 @@
 
   </div>
 
+  <footer class="site-footer" role="contentinfo">
+    <div class="site-footer-inner">
+      <span>&copy; <span id="footer-year"></span> My Shepherd. Operated by Bar Above LLC.</span>
+      <span class="site-footer-sep">·</span>
+      <span>Contributions are not tax-deductible.</span>
+    </div>
+  </footer>
+
+  <script>document.getElementById("footer-year").textContent = new Date().getFullYear();</script>
   <script src="app.js"></script>
 </body>
 </html>
