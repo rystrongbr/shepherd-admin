@@ -48,6 +48,36 @@ function saveChatToHistory(topic, question, verseOrCitation, reflectionOrAnswer)
     // never let history persistence break the response render
     console.warn("saveChatToHistory failed:", e?.message);
   }
+
+  // If signed in, ALSO persist to server so it appears in 'Search Chats' tab
+  // and so reactions have a real chat row to attach to.
+  // Fire-and-forget — must never block the response render or throw uncaught.
+  if (currentUser && currentUser.id) {
+    const verseRef = (verseOrCitation && verseOrCitation.ref) || "";
+    const verseText = (verseOrCitation && verseOrCitation.text) || "";
+    fetch(`${API_BASE}/api/chats`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: currentUser.id,
+        topic: topic || "General",
+        question: question || "",
+        verseRef,
+        verseText,
+        reflection: reflectionOrAnswer || "",
+      }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(chat => {
+        if (chat && chat.id) {
+          currentChatId = chat.id;
+          currentChatReaction = null;
+          // If reaction buttons are already rendered for this response, enable them
+          enableReactionButtons();
+        }
+      })
+      .catch(err => console.warn("persist chat failed:", err?.message));
+  }
 }
 
 function uuidv4() {
@@ -80,6 +110,27 @@ let currentVerse = null;  // legacy v1 state — used by share button when on v1
 // and the share button. Null when on v1 path or before first ask.
 let v2LastQuestion  = null;
 let v2LastResponse  = null;  // shape: { answer, citations: [...], followUps: [...] }
+
+// ── Auth + engagement state (donations v1) ─────────────────────────────────
+// currentUser: { id, email, name, churchId } once verified via magic link.
+// We persist {id, email} in the URL hash (#?u=ID&e=EMAIL) because
+// localStorage is blocked in sandboxed iframes. URL hash survives reloads.
+let currentUser = null;
+// Most recently saved server-side chat row id (returned by POST /api/chats).
+// Reactions attach to this id. Reset when a chat starts.
+let currentChatId = null;
+// Count of asks this session — triggers the soft signup modal after Q3.
+let questionCount = 0;
+// Index of question at which we last showed the signup modal (0 = never).
+// We re-prompt every +5 questions if user dismissed.
+let lastSignupPromptedAt = 0;
+// User clicked 'opt out' on the donation prompt — never show again this session
+// (server enforces persistent opt-out via donation_prompts).
+let sessionDonationOptedOut = false;
+// Avoid double-firing donation modal from multiple eligibility checks.
+let donationModalShowing = false;
+// Avoid double-posting reactions for the same chat.
+let currentChatReaction = null; // 'helped' | 'not_helpful' | null
 
 // ── Topics ────────────────────────────────────────────────────────────────
 const TOPICS = [
@@ -397,11 +448,43 @@ async function goDeeperOnCurrent() {
 
 function renderActionButtons() {
   document.getElementById("action-btn-row")?.remove();
+  document.getElementById("reaction-btn-row")?.remove();
 
   const card = document.getElementById("response-card");
+
+  // ── Reaction row (above action buttons) ────────────────────────────────
+  // Shown to everyone; if not signed in, click triggers signup prompt first.
+  const reactionRow = document.createElement("div");
+  reactionRow.id = "reaction-btn-row";
+  reactionRow.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:18px;align-items:center;";
+
+  const reactionLabel = document.createElement("span");
+  reactionLabel.style.cssText = "font-size:0.82rem;color:var(--text-light, #9A8A7A);font-family:Inter,sans-serif;margin-right:4px;";
+  reactionLabel.textContent = "Was this helpful?";
+  reactionRow.appendChild(reactionLabel);
+
+  const helpedBtn = document.createElement("button");
+  helpedBtn.id = "btn-reaction-helped";
+  helpedBtn.className = "btn-reaction";
+  helpedBtn.setAttribute("data-testid", "button-reaction-helped");
+  helpedBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg> This helped`;
+  helpedBtn.addEventListener("click", () => onReactionClick("helped"));
+
+  const notForMeBtn = document.createElement("button");
+  notForMeBtn.id = "btn-reaction-not-helpful";
+  notForMeBtn.className = "btn-reaction btn-reaction-secondary";
+  notForMeBtn.setAttribute("data-testid", "button-reaction-not-helpful");
+  notForMeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zM17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg> Not for me`;
+  notForMeBtn.addEventListener("click", () => onReactionClick("not_helpful"));
+
+  reactionRow.appendChild(helpedBtn);
+  reactionRow.appendChild(notForMeBtn);
+  card.appendChild(reactionRow);
+
+  // ── Existing action row ────────────────────────────────────────────────
   const row  = document.createElement("div");
   row.id = "action-btn-row";
-  row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;";
+  row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;";
 
   const deeperBtn = document.createElement("button");
   deeperBtn.id = "btn-go-deeper";
@@ -422,6 +505,96 @@ function renderActionButtons() {
   card.appendChild(row);
 }
 
+// ── Reaction handling ─────────────────────────────────────────────────────
+// When the user is signed in AND we have a chatId, POST the reaction.
+// When not signed in (no chatId yet), still capture the intent so we can
+// nudge signup, and lock the buttons so they can't double-click.
+function enableReactionButtons() {
+  // No-op: buttons are always enabled. Function exists so saveChatToHistory
+  // can call it after chat is persisted (in case we want to do something
+  // visual later, like fade in the buttons).
+}
+
+async function onReactionClick(reaction) {
+  // De-bounce: already reacted to this chat
+  if (currentChatReaction) return;
+  currentChatReaction = reaction;
+
+  // Visual feedback — highlight the chosen button, dim the other
+  const helpedBtn = document.getElementById("btn-reaction-helped");
+  const notForMeBtn = document.getElementById("btn-reaction-not-helpful");
+  if (reaction === "helped") {
+    helpedBtn?.classList.add("btn-reaction-selected");
+    notForMeBtn?.style.setProperty("opacity", "0.4");
+  } else {
+    notForMeBtn?.classList.add("btn-reaction-selected");
+    helpedBtn?.style.setProperty("opacity", "0.4");
+  }
+  if (helpedBtn) helpedBtn.disabled = true;
+  if (notForMeBtn) notForMeBtn.disabled = true;
+
+  // If not signed in, this is a great moment to ask for signup
+  if (!currentUser || !currentUser.id) {
+    // Show a small thank-you nudge first
+    showInlineToast(reaction === "helped" ? "Thanks for the feedback. Save your chats?" : "Got it — thanks for the feedback.");
+    if (reaction === "helped") {
+      // Trigger signup modal after a short pause so the toast is read first
+      setTimeout(() => openSignupModal("reaction"), 900);
+    }
+    return;
+  }
+
+  // Signed in but chat not yet persisted — wait briefly for chatId
+  if (!currentChatId) {
+    // Poll for chatId (saveChatToHistory is in flight)
+    for (let i = 0; i < 20 && !currentChatId; i++) {
+      await new Promise(r => setTimeout(r, 150));
+    }
+  }
+  if (!currentChatId) {
+    // Persist failed — silently bail
+    console.warn("reaction click but no chatId");
+    return;
+  }
+
+  // Fire the reaction to the server
+  try {
+    await fetch(`${API_BASE}/api/chats/${currentChatId}/reaction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: currentUser.id, reaction }),
+    });
+  } catch (e) {
+    console.warn("reaction post failed:", e?.message);
+  }
+
+  // On 'helped', schedule a donation prompt eligibility check after 30s
+  if (reaction === "helped" && !sessionDonationOptedOut) {
+    showInlineToast("Thanks for letting us know — glad it helped.");
+    setTimeout(() => maybeShowDonationPrompt("reaction_helped"), 30 * 1000);
+  } else if (reaction === "not_helpful") {
+    showInlineToast("Thanks for the feedback. We'll keep improving.");
+  }
+}
+
+// Lightweight inline toast — appears at the bottom of the response card.
+function showInlineToast(message) {
+  // Remove any existing toast first
+  document.getElementById("inline-toast")?.remove();
+  const card = document.getElementById("response-card");
+  if (!card) return;
+  const toast = document.createElement("div");
+  toast.id = "inline-toast";
+  toast.style.cssText = "margin-top:10px;padding:10px 14px;background:#f5f0eb;border-left:3px solid #7B4A1E;color:#5A4A3A;font-size:0.84rem;font-family:Inter,sans-serif;border-radius:6px;animation:fadeIn 0.3s ease;";
+  toast.textContent = message;
+  card.appendChild(toast);
+  setTimeout(() => {
+    toast.style.transition = "opacity 0.5s";
+    toast.style.opacity = "0";
+    setTimeout(() => toast.remove(), 500);
+  }, 4000);
+}
+
 function handleNextQuestion() {
   // Reset all state
   isLoading = false;
@@ -429,10 +602,14 @@ function handleNextQuestion() {
   currentVerse = null;
   v2LastQuestion = null;
   v2LastResponse = null;
+  currentChatId = null;
+  currentChatReaction = null;
 
   // Hide response area + remove buttons
   document.getElementById("response-section").style.display = "none";
   document.getElementById("action-btn-row")?.remove();
+  document.getElementById("reaction-btn-row")?.remove();
+  document.getElementById("inline-toast")?.remove();
   document.getElementById("btn-share-verse")?.remove();
   document.getElementById("follow-up-chips").style.display = "none";
   document.getElementById("btn-ask-another").style.display = "none";
@@ -454,10 +631,9 @@ function handleNextQuestion() {
   window.scrollTo({ top: 0, behavior: "smooth" });
   setTimeout(() => input.focus(), 300);
 
-  // Show sign-in prompt if not logged in
-  if (!currentUser) {
-    setTimeout(() => openLoginModal(), 600);
-  }
+  // We deliberately do NOT auto-open the signup modal here. Cadence is
+  // handled by maybeShowSignupModal() called from handleAsk() based on
+  // questionCount, so users get a smooth read-flow on response #1-2.
 }
 
 // ── Insight Logging ───────────────────────────────────────────────────────
@@ -697,6 +873,10 @@ function topicQuestionSuggestion(topic) {
 // ── Response Display ───────────────────────────────────────────────────────
 async function showResponse(topic, question) {
   isLoading = true;
+  // Reset reaction + chatId state for this new response. saveChatToHistory will
+  // set a new currentChatId once the chat is persisted server-side.
+  currentChatId = null;
+  currentChatReaction = null;
   const section  = document.getElementById("response-section");
   const content  = document.getElementById("response-content");
   const topicTag = document.getElementById("response-topic-tag");
@@ -897,10 +1077,404 @@ async function handleAsk() {
   if (activeBtn) activeBtn.classList.add("active");
   currentTopic = topic;
 
+  questionCount++;
   logInsight(topic, q);
   await showResponse(topic, q);
   input.value = "";
   document.getElementById("char-hint").textContent = "";
+
+  // Soft signup prompt: first show at Q3, then re-prompt every +5 if dismissed.
+  maybeShowSignupModal();
+}
+
+// Decide whether to show the signup modal after this question.
+// Rules:
+//   - User is not signed in
+//   - questionCount has hit 3, OR is >= lastSignupPromptedAt + 5 if previously dismissed
+function maybeShowSignupModal() {
+  if (currentUser && currentUser.id) return;
+  if (questionCount < 3) return;
+  if (lastSignupPromptedAt > 0 && questionCount < lastSignupPromptedAt + 5) return;
+  if (questionCount === lastSignupPromptedAt) return;
+  lastSignupPromptedAt = questionCount;
+  // Delay so the response renders + user has time to read before modal appears
+  setTimeout(() => openSignupModal("cadence"), 4500);
+}
+
+// ── Auth + Signup + Donations ──────────────────────────────────────────────
+function parseHashParams() {
+  const out = {};
+  const hash = window.location.hash || "";
+  const qIdx = hash.indexOf("?");
+  if (qIdx < 0) return out;
+  const qs = hash.slice(qIdx + 1);
+  qs.split("&").forEach(p => {
+    const [k, v] = p.split("=");
+    if (k) out[k] = decodeURIComponent(v || "");
+  });
+  return out;
+}
+
+function setHashParam(key, value) {
+  const params = parseHashParams();
+  if (value === null || value === undefined || value === "") {
+    delete params[key];
+  } else {
+    params[key] = value;
+  }
+  const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+  const newHash = qs ? `#?${qs}` : "";
+  window.history.replaceState(null, "", window.location.pathname + window.location.search + newHash);
+}
+
+async function initAuth() {
+  const params = parseHashParams();
+
+  if (params.magic) {
+    try {
+      const res = await fetch(`${API_BASE}/api/user/verify?token=${encodeURIComponent(params.magic)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.user) {
+          currentUser = data.user;
+          setHashParam("magic", null);
+          setHashParam("u", String(currentUser.id));
+          setHashParam("e", currentUser.email || "");
+          showSignedInUI();
+          setTimeout(() => showInlineToast(`Signed in as ${currentUser.email}`), 600);
+          return;
+        }
+      }
+      setHashParam("magic", null);
+      console.warn("Magic link verification failed (invalid or expired)");
+    } catch (e) {
+      console.warn("Magic link verify request failed:", e?.message);
+    }
+  }
+
+  if (params.u && params.e) {
+    try {
+      const res = await fetch(`${API_BASE}/api/user/me?userId=${encodeURIComponent(params.u)}`);
+      if (res.ok) {
+        const user = await res.json();
+        if (user && user.id) {
+          currentUser = user;
+          showSignedInUI();
+          return;
+        }
+      }
+      setHashParam("u", null);
+      setHashParam("e", null);
+    } catch (e) {
+      console.warn("Restore user from hash failed:", e?.message);
+    }
+  }
+
+  if (params.donation === "success") {
+    setTimeout(showDonationThankYou, 500);
+    setHashParam("donation", null);
+    setHashParam("sid", null);
+  } else if (params.donation === "cancel") {
+    setHashParam("donation", null);
+  }
+}
+
+function showSignedInUI() {
+  const signInBtn = document.getElementById("btn-sign-in-header");
+  if (signInBtn) signInBtn.style.display = "none";
+  const menu = document.getElementById("user-avatar-menu");
+  if (menu) menu.style.display = "";
+  const avatarBtn = document.getElementById("btn-user-avatar");
+  if (avatarBtn && currentUser?.email) {
+    avatarBtn.textContent = currentUser.email.charAt(0).toUpperCase();
+  }
+  const emailLbl = document.getElementById("user-dropdown-email");
+  if (emailLbl && currentUser?.email) emailLbl.textContent = currentUser.email;
+  const heart = document.getElementById("btn-donate-heart");
+  if (heart) heart.style.display = "";
+}
+
+function showSignedOutUI() {
+  const signInBtn = document.getElementById("btn-sign-in-header");
+  if (signInBtn) signInBtn.style.display = "";
+  const menu = document.getElementById("user-avatar-menu");
+  if (menu) menu.style.display = "none";
+  const heart = document.getElementById("btn-donate-heart");
+  if (heart) heart.style.display = "none";
+}
+
+function signOut() {
+  currentUser = null;
+  setHashParam("u", null);
+  setHashParam("e", null);
+  showSignedOutUI();
+  const dd = document.getElementById("user-dropdown");
+  if (dd) dd.style.display = "none";
+}
+
+function openLoginModal() {
+  openSignupModal("manual");
+}
+
+function openSignupModal(trigger) {
+  if (currentUser && currentUser.id) return;
+  const modal = document.getElementById("login-modal");
+  if (!modal) return;
+
+  const subtitle = modal.querySelector(".modal-subtitle");
+  if (subtitle) {
+    if (trigger === "reaction") {
+      subtitle.textContent = "Save this scripture and all your future chats — we'll send a one-tap sign-in link to your email.";
+    } else if (trigger === "cadence") {
+      subtitle.textContent = "You've been exploring a lot. Save your scripture history so you can come back to it anytime.";
+    } else {
+      subtitle.textContent = "Save your scripture history and pick up where you left off on any device.";
+    }
+  }
+
+  const sentEl = document.getElementById("magic-link-sent");
+  if (sentEl) sentEl.style.display = "none";
+  const form = document.getElementById("magic-link-form");
+  if (form) form.style.display = "";
+  const sendBtn = document.getElementById("btn-send-magic-link");
+  if (sendBtn) {
+    sendBtn.disabled = false;
+    sendBtn.textContent = "Send Sign-In Link";
+  }
+
+  modal.style.display = "flex";
+}
+
+function closeLoginModal() {
+  const modal = document.getElementById("login-modal");
+  if (modal) modal.style.display = "none";
+}
+
+async function handleSendMagicLink() {
+  const input = document.getElementById("magic-email-input");
+  const btn = document.getElementById("btn-send-magic-link");
+  const email = (input?.value || "").trim().toLowerCase();
+  if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+    input?.focus();
+    return;
+  }
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = "Sending…";
+  try {
+    const res = await fetch(`${API_BASE}/api/user/magic-link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    document.getElementById("magic-link-form").style.display = "none";
+    document.getElementById("magic-link-sent").style.display = "";
+  } catch (e) {
+    btn.textContent = originalText;
+    btn.disabled = false;
+    alert("Sorry, we couldn't send your sign-in link. Please try again.");
+    console.warn("magic link request failed:", e?.message);
+  }
+}
+
+const DONATION_AMOUNTS = [
+  { cents: 300, label: "$3" },
+  { cents: 500, label: "$5" },
+  { cents: 1000, label: "$10" },
+];
+const DONATION_MIN_CENTS = 100;
+const DONATION_MAX_CENTS = 50000;
+
+async function maybeShowDonationPrompt(trigger) {
+  if (donationModalShowing) return;
+  if (sessionDonationOptedOut) return;
+  if (!currentUser || !currentUser.id) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/donations/eligibility?userId=${currentUser.id}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.eligible) {
+      console.log("[donation] not eligible:", data.reason);
+      return;
+    }
+    showDonationModal(trigger);
+  } catch (e) {
+    console.warn("eligibility check failed:", e?.message);
+  }
+}
+
+async function showDonationModal(trigger) {
+  if (!currentUser || !currentUser.id) return;
+  if (donationModalShowing) return;
+  donationModalShowing = true;
+
+  let promptId = null;
+  try {
+    const res = await fetch(`${API_BASE}/api/donations/prompt/log`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: currentUser.id, trigger: trigger || "manual_button" }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      promptId = data.promptId;
+    }
+  } catch (e) {
+    console.warn("log prompt failed:", e?.message);
+  }
+
+  const existing = document.getElementById("donation-modal");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "donation-modal";
+  overlay.className = "modal-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.style.cssText = "display:flex;";
+
+  const amountButtons = DONATION_AMOUNTS.map(a =>
+    `<button class="donation-amount-btn" data-cents="${a.cents}" data-testid="donation-amount-${a.cents}">${a.label}</button>`
+  ).join("");
+
+  overlay.innerHTML = `
+    <div class="modal-card" style="max-width:440px;">
+      <div class="modal-header">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="#7B4A1E" aria-hidden="true" style="margin:0 auto;display:block;">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+        <h2 class="modal-title">Help keep My Shepherd free</h2>
+        <p class="modal-subtitle">A one-time gift helps us keep scripture accessible to anyone, anywhere — with no paywalls.</p>
+      </div>
+      <div id="donation-amount-row" style="display:flex;gap:10px;justify-content:center;margin:18px 0 12px;">
+        ${amountButtons}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:18px;">
+        <span style="color:var(--text-light,#9A8A7A);font-size:0.85rem;">or</span>
+        <input id="donation-custom-input" type="number" min="1" max="500" placeholder="Custom" inputmode="decimal" style="width:110px;padding:8px 10px;border:1px solid #D4B896;border-radius:6px;font-family:Inter,sans-serif;font-size:0.9rem;" data-testid="donation-custom-input" />
+        <span style="color:var(--text-mid,#5A4A3A);font-size:0.85rem;">USD</span>
+      </div>
+      <button id="btn-donate-confirm" class="btn-primary" disabled data-testid="button-donate-confirm">Continue to secure checkout</button>
+      <div style="display:flex;gap:8px;justify-content:space-between;margin-top:10px;">
+        <button id="btn-donate-maybe-later" class="btn-ghost" data-testid="button-donate-maybe-later" style="flex:1;">Maybe later</button>
+        <button id="btn-donate-opt-out" class="btn-ghost" data-testid="button-donate-opt-out" style="flex:1;font-size:0.78rem;color:var(--text-light,#9A8A7A);">Don't ask again</button>
+      </div>
+      <p style="text-align:center;color:var(--text-light,#9A8A7A);font-size:0.72rem;margin-top:14px;font-family:Inter,sans-serif;">Secured by Stripe · You'll get a receipt by email</p>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  let selectedCents = null;
+  const confirmBtn = overlay.querySelector("#btn-donate-confirm");
+  const customInput = overlay.querySelector("#donation-custom-input");
+
+  function updateConfirm() {
+    confirmBtn.disabled = !selectedCents || selectedCents < DONATION_MIN_CENTS || selectedCents > DONATION_MAX_CENTS;
+  }
+
+  overlay.querySelectorAll(".donation-amount-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      overlay.querySelectorAll(".donation-amount-btn").forEach(b => b.classList.remove("donation-amount-selected"));
+      btn.classList.add("donation-amount-selected");
+      selectedCents = Number(btn.dataset.cents);
+      customInput.value = "";
+      updateConfirm();
+    });
+  });
+
+  customInput.addEventListener("input", () => {
+    overlay.querySelectorAll(".donation-amount-btn").forEach(b => b.classList.remove("donation-amount-selected"));
+    const dollars = parseFloat(customInput.value);
+    selectedCents = isFinite(dollars) && dollars > 0 ? Math.round(dollars * 100) : null;
+    updateConfirm();
+  });
+
+  confirmBtn.addEventListener("click", () => handleDonateConfirm(selectedCents, promptId, overlay));
+
+  overlay.querySelector("#btn-donate-maybe-later").addEventListener("click", () => {
+    recordPromptOutcome(promptId, "maybe_later");
+    closeDonationModal();
+  });
+
+  overlay.querySelector("#btn-donate-opt-out").addEventListener("click", () => {
+    sessionDonationOptedOut = true;
+    recordPromptOutcome(promptId, "opt_out");
+    closeDonationModal();
+  });
+}
+
+function closeDonationModal() {
+  const m = document.getElementById("donation-modal");
+  if (m) m.remove();
+  donationModalShowing = false;
+}
+
+async function recordPromptOutcome(promptId, outcome) {
+  if (!promptId) return;
+  try {
+    await fetch(`${API_BASE}/api/donations/prompt/${promptId}/outcome`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome }),
+    });
+  } catch (e) {
+    console.warn("prompt outcome update failed:", e?.message);
+  }
+}
+
+async function handleDonateConfirm(amountCents, promptId, overlay) {
+  if (!amountCents || amountCents < DONATION_MIN_CENTS || amountCents > DONATION_MAX_CENTS) return;
+  if (!currentUser || !currentUser.id) return;
+  const confirmBtn = overlay.querySelector("#btn-donate-confirm");
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = "Redirecting to checkout…";
+  try {
+    const res = await fetch(`${API_BASE}/api/donations/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: currentUser.id,
+        promptId,
+        amountCents,
+        email: currentUser.email,
+        origin: window.location.origin,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    if (!data.url) throw new Error("No checkout URL");
+    window.location.assign(data.url);
+  } catch (e) {
+    console.warn("checkout failed:", e?.message);
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = "Continue to secure checkout";
+    alert(`Sorry, we couldn't start checkout: ${e?.message || "unknown error"}`);
+  }
+}
+
+function showDonationThankYou() {
+  const existing = document.getElementById("donation-thanks");
+  if (existing) existing.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "donation-thanks";
+  overlay.className = "modal-overlay";
+  overlay.style.cssText = "display:flex;";
+  overlay.innerHTML = `
+    <div class="modal-card" style="max-width:400px;text-align:center;">
+      <svg width="54" height="54" viewBox="0 0 24 24" fill="#7B4A1E" aria-hidden="true" style="margin:0 auto 12px;display:block;">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+      </svg>
+      <h2 class="modal-title" style="margin-bottom:8px;">Thank you</h2>
+      <p class="modal-subtitle" style="margin-bottom:20px;">Your gift keeps My Shepherd free for everyone. We'll email your receipt shortly.</p>
+      <button id="btn-thanks-close" class="btn-primary">Continue exploring</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#btn-thanks-close").addEventListener("click", () => overlay.remove());
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -959,10 +1533,74 @@ function init() {
     }
   });
 
+  // ── Auth wiring (signup/login modal + header buttons) ─────────────────
+  const magicBtn = document.getElementById("btn-send-magic-link");
+  if (magicBtn) magicBtn.addEventListener("click", handleSendMagicLink);
+  const magicInput = document.getElementById("magic-email-input");
+  if (magicInput) {
+    magicInput.addEventListener("keydown", e => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleSendMagicLink();
+      }
+    });
+  }
+  const skipLoginBtn = document.getElementById("btn-skip-login");
+  if (skipLoginBtn) skipLoginBtn.addEventListener("click", closeLoginModal);
+  const signInHeaderBtn = document.getElementById("btn-sign-in-header");
+  if (signInHeaderBtn) signInHeaderBtn.addEventListener("click", openLoginModal);
+
+  // Click avatar to toggle dropdown; click sign-out to clear state
+  const avatarBtn = document.getElementById("btn-user-avatar");
+  if (avatarBtn) {
+    avatarBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const dd = document.getElementById("user-dropdown");
+      if (dd) dd.style.display = dd.style.display === "none" || !dd.style.display ? "" : "none";
+    });
+  }
+  const signOutBtn = document.getElementById("btn-sign-out");
+  if (signOutBtn) signOutBtn.addEventListener("click", signOut);
+  // Close avatar dropdown on outside click
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("user-avatar-menu");
+    if (menu && !menu.contains(e.target)) {
+      const dd = document.getElementById("user-dropdown");
+      if (dd) dd.style.display = "none";
+    }
+  });
+
+  // Donation heart in header (created dynamically; hidden until signed in)
+  injectDonationHeart();
+
+  // Run auth init: parses #?magic=, #?u=, #?donation= and sets currentUser
+  initAuth().catch(err => console.warn("initAuth failed:", err?.message));
+
   // Restore affiliation from backend if this session was previously affiliated
   restoreAffiliation().then(() => {
     loadTrending();
   });
+}
+
+// Add the donation heart icon to the header. Created in JS to keep the
+// diff against index.html minimal.
+function injectDonationHeart() {
+  if (document.getElementById("btn-donate-heart")) return;
+  const headerRight = document.querySelector(".header-right");
+  if (!headerRight) return;
+  const btn = document.createElement("button");
+  btn.id = "btn-donate-heart";
+  btn.className = "btn-donate-heart";
+  btn.setAttribute("data-testid", "button-donate-heart");
+  btn.setAttribute("aria-label", "Support My Shepherd");
+  btn.setAttribute("title", "Support My Shepherd");
+  btn.style.display = "none"; // shown only after sign-in
+  btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7B4A1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
+  btn.addEventListener("click", () => showDonationModal("manual_button"));
+  // Insert before the user menu area so heart sits to the left of avatar
+  const userMenu = document.getElementById("user-menu-area");
+  if (userMenu) headerRight.insertBefore(btn, userMenu);
+  else headerRight.appendChild(btn);
 }
 
 async function restoreAffiliation() {

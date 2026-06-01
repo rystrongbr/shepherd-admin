@@ -22,6 +22,18 @@ declare module "http" {
   }
 }
 
+// Stripe webhook MUST receive the raw body so the signature can be verified.
+// Registered BEFORE express.json() so the JSON middleware doesn't consume the body.
+app.post(
+  "/api/donations/webhook",
+  express.raw({ type: "application/json" }),
+  (req, _res, next) => {
+    // Hand off to the route handler (registered later in registerDonationRoutes).
+    // The handler reads req.body as a Buffer.
+    next();
+  },
+);
+
 app.use(
   express.json({
     verify: (req, _res, buf) => {

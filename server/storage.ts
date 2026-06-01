@@ -187,6 +187,44 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_email_events_email   ON email_events (email);
   CREATE INDEX IF NOT EXISTS idx_email_events_type    ON email_events (event_type, occurred_at);
   CREATE INDEX IF NOT EXISTS idx_email_events_member  ON email_events (member_id);
+
+  -- ─── Donations module ───────────────────────────────────────────────────────
+  CREATE TABLE IF NOT EXISTS chat_reactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    reaction TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_reactions_user ON chat_reactions (user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_chat_reactions_chat ON chat_reactions (chat_id);
+
+  CREATE TABLE IF NOT EXISTS donation_prompts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    trigger TEXT NOT NULL,
+    outcome TEXT NOT NULL DEFAULT 'shown',
+    shown_at TEXT NOT NULL DEFAULT (datetime('now')),
+    outcome_at TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_donation_prompts_user ON donation_prompts (user_id, shown_at);
+
+  CREATE TABLE IF NOT EXISTS donations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    email TEXT NOT NULL DEFAULT '',
+    stripe_session_id TEXT NOT NULL UNIQUE,
+    stripe_payment_intent_id TEXT NOT NULL DEFAULT '',
+    amount_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'usd',
+    frequency TEXT NOT NULL DEFAULT 'one_time',
+    status TEXT NOT NULL DEFAULT 'pending',
+    prompt_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_donations_user ON donations (user_id);
+  CREATE INDEX IF NOT EXISTS idx_donations_status ON donations (status, created_at);
 `);
 
 // ─── Additive column migrations (email module) ───────────────────────────────

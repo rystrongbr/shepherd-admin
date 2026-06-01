@@ -1,5 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { type Server } from "http";
+import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { getScriptureResponse, getDeeperResponse } from "./ai";
 import { ask as askV2, drillDown as drillDownV2, isV2Configured } from "./ai-v2";
@@ -22,6 +23,7 @@ import {
 // transactional helpers (magic-link + onboard notification). Phase B will
 // move them into server/email/transactional.ts so this import goes away.
 import { sgSendMail } from "./email/sendgrid-client";
+import { registerDonationRoutes } from "./donations";
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
 // Simple token-based auth for the admin dashboard.
@@ -52,6 +54,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/user/google",
     "/user/me",
     "/chats",
+    "/donations",
   ];
   if (PUBLIC.some(p => req.path.startsWith(p))) return next();
   // Also allow GET /affiliations/:sessionId (for session restore)
@@ -68,6 +71,9 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // Apply auth middleware to all /api routes
   app.use("/api", requireAuth);
+
+  // Donation routes (consumer-facing, in the public allowlist above).
+  registerDonationRoutes(app);
 
   // ─── Health check (Railway / uptime monitors) ────────────────────────────
   app.get("/api/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
@@ -112,7 +118,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!email) return res.status(400).json({ error: "email is required" });
 
     // Generate a secure token
-    const token = require("crypto").randomBytes(32).toString("hex");
+    const token = randomBytes(32).toString("hex");
     const expiry = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
 
     storage.setMagicToken(email, token, expiry);
