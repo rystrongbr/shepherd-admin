@@ -132,6 +132,38 @@ let donationModalShowing = false;
 // Avoid double-posting reactions for the same chat.
 let currentChatReaction = null; // 'helped' | 'not_helpful' | null
 
+// ── Analytics (PostHog) ───────────────────────────────────────────────────
+// Thin, no-throw wrappers so analytics never break the app if posthog fails
+// to load (ad-blockers, offline, etc.). PostHog itself is initialized in
+// index.html with capture_pageview:true so visits + UTM params are
+// auto-captured. These helpers add the high-signal product events.
+function track(event, props) {
+  try {
+    if (typeof window !== "undefined" && window.posthog && typeof window.posthog.capture === "function") {
+      window.posthog.capture(event, props || {});
+    }
+  } catch (_e) { /* swallow */ }
+}
+function identifyUser(user) {
+  try {
+    if (!user || !user.id) return;
+    if (typeof window !== "undefined" && window.posthog && typeof window.posthog.identify === "function") {
+      window.posthog.identify(String(user.id), {
+        email: user.email || undefined,
+        name: user.name || undefined,
+        church_id: user.churchId || undefined,
+      });
+    }
+  } catch (_e) { /* swallow */ }
+}
+function resetAnalytics() {
+  try {
+    if (typeof window !== "undefined" && window.posthog && typeof window.posthog.reset === "function") {
+      window.posthog.reset();
+    }
+  } catch (_e) { /* swallow */ }
+}
+
 // ── Topics ────────────────────────────────────────────────────────────────
 const TOPICS = [
   { label: "Anxiety",     emoji: "🕊️" },
@@ -725,6 +757,18 @@ async function searchChurches(q) {
     const res = await fetch(`${API_BASE}/api/churches/search?q=${encodeURIComponent(q)}`);
     if (!res.ok) return;
     const churches = await res.json();
+    // Analytics: detect zip-code-style queries (5 digits) so we can already
+    // start measuring location-based intent before the dedicated Find-a-Home-
+    // Church (zip radius) feature ships. TODO: when zip search lands, fire a
+    // dedicated `find_church_searched` event with { zip, radius_miles, results_count }.
+    const trimmed = q.trim();
+    const zipMatch = trimmed.match(/^\d{5}$/);
+    track("church_searched", {
+      query_length: trimmed.length,
+      looks_like_zip: !!zipMatch,
+      zip: zipMatch ? trimmed : undefined,
+      results_count: Array.isArray(churches) ? churches.length : 0,
+    });
     renderChurchResults(churches, document.getElementById("church-search-results"));
   } catch (e) {}
 }
@@ -1141,6 +1185,8 @@ async function initAuth() {
           setHashParam("u", String(currentUser.id));
           setHashParam("e", currentUser.email || "");
           showSignedInUI();
+          identifyUser(currentUser);
+          track("signup_or_login", { method: "magic_link", user_id: currentUser.id });
           setTimeout(() => showInlineToast(`Signed in as ${currentUser.email}`), 600);
           return;
         }
@@ -1160,6 +1206,8 @@ async function initAuth() {
         if (user && user.id) {
           currentUser = user;
           showSignedInUI();
+          identifyUser(currentUser);
+          track("session_restored", { user_id: currentUser.id });
           return;
         }
       }
@@ -1204,6 +1252,8 @@ function showSignedOutUI() {
 }
 
 function signOut() {
+  track("sign_out");
+  resetAnalytics();
   currentUser = null;
   setHashParam("u", null);
   setHashParam("e", null);
@@ -1308,6 +1358,7 @@ async function showDonationModal(trigger) {
   if (!currentUser || !currentUser.id) return;
   if (donationModalShowing) return;
   donationModalShowing = true;
+  track("donate_modal_viewed", { trigger: trigger || "manual_button" });
 
   let promptId = null;
   try {
@@ -1429,6 +1480,7 @@ async function handleDonateConfirm(amountCents, promptId, overlay) {
   const confirmBtn = overlay.querySelector("#btn-donate-confirm");
   confirmBtn.disabled = true;
   confirmBtn.textContent = "Redirecting to checkout…";
+  track("donate_checkout_started", { amount_cents: amountCents, prompt_id: promptId || null });
   try {
     const res = await fetch(`${API_BASE}/api/donations/checkout`, {
       method: "POST",
@@ -1447,9 +1499,11 @@ async function handleDonateConfirm(amountCents, promptId, overlay) {
     }
     const data = await res.json();
     if (!data.url) throw new Error("No checkout URL");
+    track("donate_checkout_redirected", { amount_cents: amountCents });
     window.location.assign(data.url);
   } catch (e) {
     console.warn("checkout failed:", e?.message);
+    track("donate_checkout_failed", { amount_cents: amountCents, error: e?.message || "unknown" });
     confirmBtn.disabled = false;
     confirmBtn.textContent = "Continue to secure checkout";
     alert(`Sorry, we couldn't start checkout: ${e?.message || "unknown error"}`);
