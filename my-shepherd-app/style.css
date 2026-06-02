@@ -637,6 +637,21 @@ body {
 }
 .btn-sign-in-header:hover { background: var(--brown-dark); }
 
+.btn-sign-up-header {
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--brown);
+  border: 1.5px solid var(--brown);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  margin-right: 8px;
+}
+.btn-sign-up-header:hover { background: var(--brown); color: #fff; }
+
 .user-avatar-btn {
   width: 32px; height: 32px;
   border-radius: 50%;

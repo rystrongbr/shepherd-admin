@@ -35,7 +35,7 @@
           <circle cx="18" cy="18" r="17" stroke="#7B4A1E" stroke-width="2"/>
           <path d="M18 8 L18 28 M13 13 C13 13 15 11 18 13 C21 11 23 13 23 13" stroke="#7B4A1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <h2 class="modal-title">Sign in to My Shepherd</h2>
+        <h2 class="modal-title" id="login-modal-title">Sign in to My Shepherd</h2>
         <p class="modal-subtitle">Save your scripture history and pick up where you left off on any device.</p>
       </div>
 
@@ -54,6 +54,12 @@
           ✓ Check your email — a sign-in link is on its way!
         </div>
       </div>
+
+      <!-- Toggle between Sign In <-> Sign Up modes -->
+      <p id="login-modal-mode-toggle" style="text-align:center;font-size:0.85rem;color:var(--text-mid,#5A4A3A);margin:12px 0 8px;">
+        <span id="login-modal-mode-toggle-text">New to My Shepherd?</span>
+        <a href="#" id="login-modal-mode-toggle-link" style="color:#7B4A1E;font-weight:600;text-decoration:underline;margin-left:4px;" data-testid="link-toggle-auth-mode">Sign up here</a>
+      </p>
 
       <button id="btn-skip-login" class="btn-ghost" data-testid="button-skip-login">Continue without signing in</button>
     </div>
@@ -110,6 +116,7 @@
         <div class="header-right">
           <div id="church-badge-header" class="church-badge-header" style="display:none"></div>
           <div id="user-menu-area">
+            <button id="btn-sign-up-header" class="btn-sign-up-header" data-testid="button-sign-up-header">Sign Up</button>
             <button id="btn-sign-in-header" class="btn-sign-in-header" data-testid="button-sign-in-header">Sign In</button>
             <div id="user-avatar-menu" class="user-avatar-menu" style="display:none">
               <button id="btn-user-avatar" class="user-avatar-btn" data-testid="button-user-avatar"></button>

@@ -1230,6 +1230,8 @@ async function initAuth() {
 function showSignedInUI() {
   const signInBtn = document.getElementById("btn-sign-in-header");
   if (signInBtn) signInBtn.style.display = "none";
+  const signUpBtn = document.getElementById("btn-sign-up-header");
+  if (signUpBtn) signUpBtn.style.display = "none";
   const menu = document.getElementById("user-avatar-menu");
   if (menu) menu.style.display = "";
   const avatarBtn = document.getElementById("btn-user-avatar");
@@ -1245,6 +1247,8 @@ function showSignedInUI() {
 function showSignedOutUI() {
   const signInBtn = document.getElementById("btn-sign-in-header");
   if (signInBtn) signInBtn.style.display = "";
+  const signUpBtn = document.getElementById("btn-sign-up-header");
+  if (signUpBtn) signUpBtn.style.display = "";
   const menu = document.getElementById("user-avatar-menu");
   if (menu) menu.style.display = "none";
   const heart = document.getElementById("btn-donate-heart");
@@ -1262,8 +1266,40 @@ function signOut() {
   if (dd) dd.style.display = "none";
 }
 
+// Mode: 'signin' (returning user) or 'signup' (new user).
+// Affects modal title, subtitle, button label, and toggle link copy.
+let currentAuthMode = "signin";
+
+function setAuthMode(mode) {
+  currentAuthMode = mode === "signup" ? "signup" : "signin";
+  const title = document.getElementById("login-modal-title");
+  const subtitle = document.querySelector("#login-modal .modal-subtitle");
+  const sendBtn = document.getElementById("btn-send-magic-link");
+  const toggleText = document.getElementById("login-modal-mode-toggle-text");
+  const toggleLink = document.getElementById("login-modal-mode-toggle-link");
+  if (currentAuthMode === "signup") {
+    if (title) title.textContent = "Create your My Shepherd account";
+    if (subtitle) subtitle.textContent = "Save your scripture history and pick up where you left off on any device.";
+    if (sendBtn) sendBtn.textContent = "Send Sign-Up Link";
+    if (toggleText) toggleText.textContent = "Already have an account?";
+    if (toggleLink) toggleLink.textContent = "Sign in here";
+  } else {
+    if (title) title.textContent = "Sign in to My Shepherd";
+    if (subtitle) subtitle.textContent = "Welcome back \u2014 enter your email and we\u2019ll send a one-tap sign-in link.";
+    if (sendBtn) sendBtn.textContent = "Send Sign-In Link";
+    if (toggleText) toggleText.textContent = "New to My Shepherd?";
+    if (toggleLink) toggleLink.textContent = "Sign up here";
+  }
+}
+
 function openLoginModal() {
-  openSignupModal("manual");
+  setAuthMode("signin");
+  openSignupModal("manual_signin");
+}
+
+function openSignupFlow() {
+  setAuthMode("signup");
+  openSignupModal("manual_signup");
 }
 
 function openSignupModal(trigger) {
@@ -1272,7 +1308,9 @@ function openSignupModal(trigger) {
   if (!modal) return;
 
   const subtitle = modal.querySelector(".modal-subtitle");
-  if (subtitle) {
+  // For manual_signin / manual_signup, setAuthMode() owns the title + subtitle copy.
+  // For automatic triggers (reaction, cadence), use the contextual nudge copy.
+  if (subtitle && trigger !== "manual_signin" && trigger !== "manual_signup") {
     if (trigger === "reaction") {
       subtitle.textContent = "Save this scripture and all your future chats — we'll send a one-tap sign-in link to your email.";
     } else if (trigger === "cadence") {
@@ -1289,7 +1327,8 @@ function openSignupModal(trigger) {
   const sendBtn = document.getElementById("btn-send-magic-link");
   if (sendBtn) {
     sendBtn.disabled = false;
-    sendBtn.textContent = "Send Sign-In Link";
+    // Respect the current auth mode so manual Sign-Up flow keeps its label.
+    sendBtn.textContent = currentAuthMode === "signup" ? "Send Sign-Up Link" : "Send Sign-In Link";
   }
 
   modal.style.display = "flex";
@@ -1603,6 +1642,15 @@ function init() {
   if (skipLoginBtn) skipLoginBtn.addEventListener("click", closeLoginModal);
   const signInHeaderBtn = document.getElementById("btn-sign-in-header");
   if (signInHeaderBtn) signInHeaderBtn.addEventListener("click", openLoginModal);
+  const signUpHeaderBtn = document.getElementById("btn-sign-up-header");
+  if (signUpHeaderBtn) signUpHeaderBtn.addEventListener("click", openSignupFlow);
+  const modeToggleLink = document.getElementById("login-modal-mode-toggle-link");
+  if (modeToggleLink) {
+    modeToggleLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      setAuthMode(currentAuthMode === "signup" ? "signin" : "signup");
+    });
+  }
 
   // Click avatar to toggle dropdown; click sign-out to clear state
   const avatarBtn = document.getElementById("btn-user-avatar");
