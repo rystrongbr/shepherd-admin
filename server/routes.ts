@@ -127,36 +127,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const baseUrl = process.env.APP_URL || "https://app.myshepherdapp.church";
     const magicUrl = `${baseUrl}/#?magic=${token}`;
 
-    // Send via SendGrid
-    try {
-      const graceChurch = storage.getChurch(1);
-      if (graceChurch?.sendgridApiKey) {
-        await sgSendMail(
-          {
-            apiKey: graceChurch.sendgridApiKey,
-            fromEmail: "ryan+shepherd@guacapp.com",
-            fromName: "My Shepherd",
-          },
-          {
-            to: email,
-            subject: "Your My Shepherd sign-in link",
-            html: `
-              <div style="font-family:Georgia,serif;max-width:500px;margin:0 auto;background:#f5f0eb;padding:32px;border-radius:12px;">
-                <h2 style="color:#7B4A1E;margin:0 0 8px;">My Shepherd</h2>
-                <p style="color:#5A4A3A;margin:0 0 24px;">Click the button below to sign in. This link expires in 15 minutes.</p>
-                <a href="${magicUrl}" style="display:inline-block;background:#7B4A1E;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-family:Arial,sans-serif;font-weight:600;">Sign In to My Shepherd</a>
-                <p style="color:#9A8A7A;font-size:12px;margin-top:24px;font-family:Arial,sans-serif;">If you didn't request this, you can ignore this email.</p>
-              </div>
-            `,
-            categories: ["magic-link"],
-          },
-        );
-      }
-    } catch (emailErr: any) {
-      console.error("Magic link email failed:", emailErr.message);
+    // Resolve SendGrid config: env vars first, fall back to legacy church-row
+    // setup so existing installs keep working until migrated.
+    const sgApiKey = process.env.SENDGRID_API_KEY || storage.getChurch(1)?.sendgridApiKey;
+    const fromEmail = process.env.SENDGRID_FROM_EMAIL || "hello@myshepherdapp.church";
+    const fromName  = process.env.SENDGRID_FROM_NAME  || "My Shepherd";
+
+    if (!sgApiKey) {
+      console.error("Magic link email NOT sent: SENDGRID_API_KEY is not configured.");
+      return res.status(500).json({ ok: false, error: "Email service not configured" });
     }
 
-    res.json({ ok: true, message: "Magic link sent" });
+    // Send via SendGrid
+    try {
+      await sgSendMail(
+        {
+          apiKey: sgApiKey,
+          fromEmail,
+          fromName,
+        },
+        {
+          to: email,
+          subject: "Your My Shepherd sign-in link",
+          html: `
+            <div style="font-family:Georgia,serif;max-width:500px;margin:0 auto;background:#f5f0eb;padding:32px;border-radius:12px;">
+              <h2 style="color:#7B4A1E;margin:0 0 8px;">My Shepherd</h2>
+              <p style="color:#5A4A3A;margin:0 0 24px;">Click the button below to sign in. This link expires in 15 minutes.</p>
+              <a href="${magicUrl}" style="display:inline-block;background:#7B4A1E;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-family:Arial,sans-serif;font-weight:600;">Sign In to My Shepherd</a>
+              <p style="color:#9A8A7A;font-size:12px;margin-top:24px;font-family:Arial,sans-serif;">If you didn't request this, you can ignore this email.</p>
+            </div>
+          `,
+          categories: ["magic-link"],
+        },
+      );
+      res.json({ ok: true, message: "Magic link sent" });
+    } catch (emailErr: any) {
+      console.error("Magic link email failed:", emailErr?.message);
+      return res.status(502).json({ ok: false, error: "Email send failed" });
+    }
   });
 
   /**
@@ -409,14 +417,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         meta: JSON.stringify({ pastor: `${pastorFirstName} ${pastorLastName}`, email, phone, size }),
       });
 
-      // Send notification email to Ryan via the Grace Community SendGrid config
+      // Send internal notification: env vars first, fall back to legacy church-row
       try {
-        const graceChurch = storage.getChurch(1);
-        if (graceChurch?.sendgridApiKey) {
+        const notifyApiKey = process.env.SENDGRID_API_KEY || storage.getChurch(1)?.sendgridApiKey;
+        if (notifyApiKey) {
           const sgConfig = {
-            apiKey: graceChurch.sendgridApiKey,
-            fromEmail: "ryan+shepherd@guacapp.com",
-            fromName: "My Shepherd",
+            apiKey: notifyApiKey,
+            fromEmail: process.env.SENDGRID_FROM_EMAIL || "hello@myshepherdapp.church",
+            fromName: process.env.SENDGRID_FROM_NAME || "My Shepherd",
           };
           const notifyHtml = `
             <h2>New Church Signup 🎉</h2>
@@ -437,7 +445,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           await sgSendMail(
             sgConfig,
             {
-              to: "ryan+shepherd@guacapp.com",
+              to: process.env.INTERNAL_NOTIFY_EMAIL || "admin@barabove.app",
               subject: `New Church Signup: ${churchName}`,
               html: notifyHtml,
               categories: ["church-signup-notification"],
