@@ -1264,6 +1264,9 @@ function signOut() {
   showSignedOutUI();
   const dd = document.getElementById("user-dropdown");
   if (dd) dd.style.display = "none";
+  // If History tab is currently visible, refresh it to show the signed-out state
+  const histTab = document.getElementById("tab-history");
+  if (histTab && histTab.style.display !== "none") renderHistoryTab();
 }
 
 // Mode: 'signin' (returning user) or 'signup' (new user).
@@ -1571,8 +1574,102 @@ function showDonationThankYou() {
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
+// ── Tab switching (Explore / Search Chats) ──────────────────────────────
+function switchTab(tabName) {
+  // Toggle button active state
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.tab === tabName);
+  });
+  // Toggle tab content visibility
+  document.querySelectorAll(".tab-content").forEach(el => {
+    el.style.display = el.id === `tab-${tabName}` ? "" : "none";
+  });
+  // Lazy-load history when switching into it
+  if (tabName === "history") {
+    renderHistoryTab();
+  }
+}
+
+function renderHistoryTab() {
+  const loggedOut = document.getElementById("history-logged-out");
+  const loggedIn = document.getElementById("history-logged-in");
+  if (!loggedOut || !loggedIn) return;
+  if (!currentUser || !currentUser.id) {
+    loggedOut.style.display = "";
+    loggedIn.style.display = "none";
+    return;
+  }
+  loggedOut.style.display = "none";
+  loggedIn.style.display = "";
+  loadChatHistory("");
+}
+
+let historySearchDebounce = null;
+async function loadChatHistory(query) {
+  if (!currentUser || !currentUser.id) return;
+  const listEl = document.getElementById("history-list");
+  const emptyEl = document.getElementById("history-empty");
+  if (!listEl) return;
+  try {
+    const params = new URLSearchParams({ userId: String(currentUser.id) });
+    if (query) params.set("q", query);
+    const res = await fetch(`${API_BASE}/api/chats?${params.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const chats = await res.json();
+    if (!Array.isArray(chats) || chats.length === 0) {
+      listEl.innerHTML = "";
+      if (emptyEl) emptyEl.style.display = "";
+      return;
+    }
+    if (emptyEl) emptyEl.style.display = "none";
+    listEl.innerHTML = chats.map(renderHistoryItem).join("");
+  } catch (err) {
+    console.warn("loadChatHistory failed:", err?.message);
+    listEl.innerHTML = `<p style="color:var(--text-light);font-size:0.85rem;text-align:center;padding:20px;">Couldn't load your chats. Please try again.</p>`;
+  }
+}
+
+function renderHistoryItem(chat) {
+  const topic = esc(chat.topic || "Question");
+  const question = esc(chat.question || "");
+  const verse = esc(chat.verse || chat.citation || "");
+  const reflection = esc(chat.reflection || chat.answer || "");
+  const date = chat.createdAt ? new Date(chat.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+  const preview = reflection.length > 180 ? reflection.slice(0, 180) + "…" : reflection;
+  return `
+    <div class="history-item" data-testid="history-item">
+      <div class="history-item-header">
+        <span class="history-item-topic">${topic}</span>
+        ${date ? `<span class="history-item-date">${date}</span>` : ""}
+      </div>
+      ${question ? `<p class="history-item-question">${question}</p>` : ""}
+      ${verse ? `<p class="history-item-verse">${verse}</p>` : ""}
+      ${preview ? `<p class="history-item-reflection">${preview}</p>` : ""}
+    </div>`;
+}
+
+function setupTabs() {
+  // Wire tab buttons
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.tab;
+      if (tab) switchTab(tab);
+    });
+  });
+  // History search input (debounced)
+  const searchInput = document.getElementById("history-search-input");
+  if (searchInput) {
+    searchInput.addEventListener("input", e => {
+      clearTimeout(historySearchDebounce);
+      const q = e.target.value.trim();
+      historySearchDebounce = setTimeout(() => loadChatHistory(q), 300);
+    });
+  }
+}
+
 function init() {
   renderTopicGrid();
+  setupTabs();
 
   // Question input
   const input = document.getElementById("question-input");

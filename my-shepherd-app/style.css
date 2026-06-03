@@ -769,6 +769,54 @@ body {
   padding: 40px 20px;
 }
 
+.history-item {
+  background: var(--cream-card);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.history-item:hover {
+  border-color: var(--brown);
+  box-shadow: var(--shadow-sm);
+}
+.history-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  gap: 8px;
+}
+.history-item-topic {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--brown);
+}
+.history-item-date {
+  font-size: 0.72rem;
+  color: var(--text-light);
+}
+.history-item-question {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-dark);
+  margin: 4px 0;
+}
+.history-item-verse {
+  font-size: 0.8rem;
+  color: var(--sage);
+  font-weight: 600;
+  margin: 4px 0;
+}
+.history-item-reflection {
+  font-size: 0.85rem;
+  color: var(--text-mid);
+  line-height: 1.45;
+  margin: 4px 0 0;
+}
+
 .chat-card {
   background: var(--cream-card);
   border: 1.5px solid var(--border);
