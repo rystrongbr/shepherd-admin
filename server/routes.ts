@@ -24,6 +24,7 @@ import {
 // move them into server/email/transactional.ts so this import goes away.
 import { sgSendMail } from "./email/sendgrid-client";
 import { registerDonationRoutes } from "./donations";
+import { registerChurchSignupRoute } from "./church-signup";
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
 // Simple token-based auth for the admin dashboard.
@@ -55,6 +56,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/user/me",
     "/chats",
     "/donations",
+    "/church-signup",
   ];
   if (PUBLIC.some(p => req.path.startsWith(p))) return next();
   // Also allow GET /affiliations/:sessionId (for session restore)
@@ -74,6 +76,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // Donation routes (consumer-facing, in the public allowlist above).
   registerDonationRoutes(app);
+
+  // Church-prospect signup route (myshepherdapp.church landing page form).
+  registerChurchSignupRoute(app);
 
   // ─── Health check (Railway / uptime monitors) ────────────────────────────
   app.get("/api/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
