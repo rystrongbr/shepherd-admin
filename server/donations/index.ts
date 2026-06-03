@@ -124,25 +124,34 @@ export function registerDonationRoutes(app: Express) {
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object as any;
-      const sessionId = session.id;
-      const paymentIntentId = session.payment_intent || "";
-      const email = session.customer_details?.email || session.customer_email || "";
-
-      data.markDonationCompleted(sessionId, paymentIntentId, email);
-
-      // Mark the originating prompt as 'donated' (if any)
-      const promptId = session.metadata?.promptId;
-      if (promptId) {
-        const n = Number(promptId);
-        if (!Number.isNaN(n)) data.updatePromptOutcome(n, "donated");
-      }
-
-      console.log(`[donations/webhook] completed donation: ${sessionId} email=${email} amount=${session.amount_total}`);
-    }
-
+    // ACK Stripe immediately — process the event asynchronously so slow DB
+    // writes can never time out the webhook delivery.
     res.json({ received: true });
+
+    setImmediate(() => {
+      try {
+        if (event.type === "checkout.session.completed") {
+          const session = event.data.object as any;
+          const sessionId = session.id;
+          const paymentIntentId = session.payment_intent || "";
+          const email = session.customer_details?.email || session.customer_email || "";
+
+          data.markDonationCompleted(sessionId, paymentIntentId, email);
+
+          const promptId = session.metadata?.promptId;
+          if (promptId) {
+            const n = Number(promptId);
+            if (!Number.isNaN(n)) data.updatePromptOutcome(n, "donated");
+          }
+
+          console.log(`[donations/webhook] completed donation: ${sessionId} email=${email} amount=${session.amount_total}`);
+        } else {
+          console.log(`[donations/webhook] received event type: ${event.type} (no-op)`);
+        }
+      } catch (err: any) {
+        console.error("[donations/webhook] async handler failed:", err?.message || err);
+      }
+    });
   });
 
   // ─── Chat reaction (the value-moment signal) ───────────────────────────────
