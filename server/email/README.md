@@ -300,3 +300,169 @@ Before turning on the webhook:
 
 All Phase A env vars (`EMAIL_AUTOMATION_ENABLED`, `EMAIL_DRY_RUN`,
 `EMAIL_APP_URL`, etc.) continue to apply.
+
+---
+
+## Phase B.5: Internal Founder Dashboard + Donor Tag
+
+Phase B.5 is **internal-only**, gated behind staff auth. Nothing in B.5 changes
+what church admins see — it gives the founder (Ryan) a private surface to
+review automated deactivations and donor health before any of this graduates
+to church-admin-facing dashboards.
+
+### Why B.5 exists
+
+Phase B's webhook+cron will quietly mark members as deactivated when they
+bounce, unsubscribe, or hit spam. We want **30+ days of founder review with
+≤10% false-positive rate** before exposing that to the 12+ pilot churches.
+B.5 is the review surface.
+
+### Design: three-axis member identity
+
+Phase B.5 separates three concerns that were getting tangled on the `segment`
+column:
+
+| Field                | Owner            | Vocabulary                                   | Purpose                                          |
+| -------------------- | ---------------- | -------------------------------------------- | ------------------------------------------------ |
+| `segment`            | Church admin     | `new_visitor`/`regular`/`volunteer`/`inactive`/`donor` | Human-managed pastoral classification. Automation never touches this. |
+| `engagementSegment`  | Cron (machine)   | `new`/`active`/`engaged`/`dormant`/`inactive` | Phase B's nightly engagement classification.    |
+| `isDonor` + `donorSince` | Donations flow + nightly recompute | Boolean + ISO date                  | Has this person ever given? Set on first completed donation, recomputed nightly as a safety net. |
+
+Plus the deactivation pair (separate from inactivity):
+
+| Field                | Owner            | Purpose                                                                  |
+| -------------------- | ---------------- | ------------------------------------------------------------------------ |
+| `deactivatedAt`      | Webhook          | ISO timestamp the member was removed from sending. Empty string = active. |
+| `deactivationReason` | Webhook          | Free-text reason: `hard bounce x1 (mailbox full)`, `unsubscribe`, `spam_report`, etc. |
+
+**Key invariant:** the webhook stops overwriting `segment`. The webhook now
+writes `deactivatedAt` + `deactivationReason`. The segmentation cron writes
+`engagementSegment`. Donations write `isDonor` + `donorSince`. The
+human-curated `segment` column is no longer touched by automation.
+
+### Donor tag — when and how it gets set
+
+1. **Primary trigger**: when a donation transitions to `completed` (Stripe
+   webhook or manual mark-complete), the donations handler should call
+   `recomputeDonorFlagsForEmail(email)` (or update the row directly). This
+   sets `isDonor = 1` and `donorSince = <ISO of first completed donation>` if
+   not already set.
+2. **Safety net**: a nightly recompute (`recomputeDonors()` exported from
+   `index.ts`) re-walks the donations table and ensures every member with
+   ≥1 completed donation has the flag set. This catches any drift from
+   missed hooks or backfilled data.
+3. **Never auto-cleared**: a donor is a donor forever. Deactivating their
+   email does not remove the donor flag — that's the whole point of the
+   "donors deactivated" digest section.
+
+### Deactivations dashboard (frontend)
+
+Lives at `/#/deactivations`, sidebar entry under **Manage** with a yellow
+badge showing `summary.newInWindow`.
+
+Three top-line cards:
+
+- **New (last 24h)** — count of `deactivatedAt` within the digest window
+- **Donors deactivated (24h)** — donors among that group (most urgent review)
+- **Total backlog** — every member currently in deactivated state
+
+Filters: reason chips (All / Hard bounce / Soft bounce / Unsubscribe / Spam /
+Other), time window (7d/30d/90d/all), "Donors only" toggle.
+
+Table columns: Member (with Donor + Unsub badges), Church, Reason
+(category + raw string), Deactivated (CT), Bounces.
+
+### Restore (manual reactivate) — gated
+
+When `EMAIL_DEACTIVATION_RESTORE_ENABLED=true`:
+
+- A **Restore** button appears on each row.
+- Clicking opens a confirm dialog with an optional note (logged for audit).
+- On submit, `POST /api/email/deactivations/:id/restore` runs:
+  1. Clears `deactivatedAt` + `deactivationReason`
+  2. Resets `bounceCount` to 0
+  3. **Does NOT clear `unsubscribedAt`** unless original reason was `spam_report`.
+     Honest unsubscribes always stand — Restore reactivates the member's
+     internal tracking but they still won't receive marketing email.
+  4. Best-effort SendGrid re-sync via the existing `syncMember` helper.
+
+When the env flag is `false` (default): the button is hidden in the UI, and
+the backend returns `409 { reason: "restore_disabled" }`. The dashboard is
+read-only by default; you flip the flag once you trust the data.
+
+### Founder digest — 8 AM CT daily
+
+A second cron (registered alongside segmentation) sends a daily email to
+`admin@barabove.app`:
+
+- Subject: `[My Shepherd] Founder Digest — N new deactivations (D donors)`
+- Sections: donor priority list, by-reason rollup, table of yesterday's deactivations, total backlog
+- **Sends even with 0 deactivations** — absence of signal is signal too. A
+  silent day means "nothing broke", not "we forgot to send".
+- Uses global `SENDGRID_API_KEY` (transactional sender:
+  `hello@myshepherdapp.church`), not a per-church key.
+- Honors `EMAIL_AUTOMATION_ENABLED` — kill-switch suppresses both
+  segmentation and the founder digest.
+- Dashboard deep-link: `https://admin.myshepherdapp.church/#/deactivations`
+
+Manual triggers:
+
+- `POST /api/email/founder-digest/preview` — render subject + HTML without sending
+- `POST /api/email/founder-digest/run` — send right now (still honors kill-switch)
+- `POST /api/email/donors/recompute` — manual safety-net donor recompute
+
+### Phase B.5 endpoints
+
+| Endpoint                                          | Purpose                                       |
+| ------------------------------------------------- | --------------------------------------------- |
+| `GET  /api/email/deactivations`                   | List + summary; query: `since`/`reason`/`donorsOnly`/`limit` |
+| `POST /api/email/deactivations/:id/restore`       | Restore one member; body `{ note? }`; gated  |
+| `POST /api/email/founder-digest/preview`          | Render the digest without sending             |
+| `POST /api/email/founder-digest/run`              | Send the digest now                           |
+| `POST /api/email/donors/recompute`                | Manual donor-flag safety-net recompute       |
+| `GET  /api/email/status`                          | Now includes `founderDigest` block + `deactivationRestoreEnabled` |
+
+### Graduation criteria (B.5 → church-admin facing)
+
+The founder dashboard stays internal until **all three**:
+
+1. **30+ days** of daily review with no alarming false positives
+2. **≤10% false-positive rate** on deactivations (measured by Restore usage)
+3. **Thresholds stable for 14+ days** — no churn on `EMAIL_HARD_BOUNCE_LIMIT`
+   or `EMAIL_SOFT_BOUNCE_LIMIT`
+
+When all three hold, we can build the church-admin-facing version (per-church
+scope, less metadata, simpler "your member X is no longer reachable" UX).
+
+### Phase B.5 env vars
+
+| Variable                                | Required | Default                |
+| --------------------------------------- | -------- | ---------------------- |
+| `EMAIL_FOUNDER_DIGEST_TO`               | no       | `admin@barabove.app`   |
+| `EMAIL_FOUNDER_DIGEST_CRON_SCHEDULE`    | no       | `0 8 * * *`            |
+| `EMAIL_FOUNDER_DIGEST_CRON_TZ`          | no       | `America/Chicago`      |
+| `EMAIL_DEACTIVATION_RESTORE_ENABLED`    | no       | `false` (read-only)    |
+
+All Phase A and Phase B env vars continue to apply.
+
+### Confirmation: the four discipline rules
+
+Phase B.5 follows the same architectural rules as Phase A and B:
+
+1. **One-way dependency** — only `data.ts` imports `../storage`. The new
+   `listDeactivatedMembers`, `restoreDeactivatedMember`,
+   `countDeactivationsBetween`, `recomputeDonorFlags` methods are all
+   wrapped through `data.ts`.
+2. **Single public surface** — only `index.ts` re-exports.
+   `listDeactivations`, `buildDigestSummary`, `restoreMember`,
+   `recomputeDonors`, `categorizeReason`, `sendFounderDigest`,
+   `renderFounderDigest`, `runFounderDigestNow`, and the relevant types are
+   all exported from there; nothing else outside `server/email/` reaches in.
+3. **Namespaced env vars** — all new vars start with `EMAIL_` and are
+   resolved through `emailConfig`. The cron file's one documented exception
+   (live `process.env.EMAIL_AUTOMATION_ENABLED` read for the kill-switch)
+   continues to apply to the new digest cron.
+4. **Imports through `@shared/schema`** — the new schema columns
+   (`engagementSegment`, `deactivatedAt`, `deactivationReason`, `isDonor`,
+   `donorSince`) live in `shared/schema.ts` and are accessed via the same
+   path everywhere.

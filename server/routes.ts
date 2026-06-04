@@ -21,7 +21,15 @@ import {
   handleSendGridWebhook,
   listEmailCrons,
   runSegmentationNow,
+  // Phase B.5
+  listDeactivations,
+  restoreMember,
+  recomputeDonors,
+  buildDigestSummary,
+  renderFounderDigest,
+  runFounderDigestNow,
   type SendGridConfig,
+  type DeactivationListFilters,
 } from "./email";
 // sgSendMail is module-private — routes.ts only uses it via these two
 // transactional helpers (magic-link + onboard notification). Phase B will
@@ -749,8 +757,122 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         inactiveAfterDays: emailConfig.inactiveAfterDays,
         newWindowDays: emailConfig.newWindowDays,
       },
+      // Phase B.5 additions
+      founderDigest: {
+        to: emailConfig.founderDigestTo,
+        schedule: emailConfig.founderDigestCronSchedule,
+        timezone: emailConfig.founderDigestCronTz,
+      },
+      deactivationRestoreEnabled: emailConfig.deactivationRestoreEnabled,
       crons: listEmailCrons(),
     });
+  });
+
+  // ─── Phase B.5: deactivations dashboard endpoints ────────────────
+
+  /**
+   * GET /api/email/deactivations
+   * Founder dashboard data source. Query params:
+   *   ?since=<iso>    — only rows with deactivatedAt >= this ISO timestamp
+   *   ?reason=<cat>   — hard_bounce | soft_bounce | unsubscribe | spam_report | other
+   *   ?donorsOnly=1   — only donor deactivations (highest-priority review)
+   *   ?limit=<n>      — max rows, default 200
+   */
+  app.get("/api/email/deactivations", (req, res) => {
+    const filters: DeactivationListFilters = {};
+    if (typeof req.query.since === "string") filters.sinceIso = req.query.since;
+    if (typeof req.query.reason === "string") {
+      filters.reasonCategory = req.query.reason as DeactivationListFilters["reasonCategory"];
+    }
+    if (req.query.donorsOnly === "1" || req.query.donorsOnly === "true") {
+      filters.donorsOnly = true;
+    }
+    if (typeof req.query.limit === "string") {
+      const n = parseInt(req.query.limit, 10);
+      if (Number.isFinite(n)) filters.limit = n;
+    }
+    const rows = listDeactivations(filters);
+    const summary = buildDigestSummary();
+    res.json({
+      ok: true,
+      restoreEnabled: emailConfig.deactivationRestoreEnabled,
+      summary: {
+        windowFromIso: summary.windowFromIso,
+        windowToIso:   summary.windowToIso,
+        newInWindow:   summary.newDeactivations.length,
+        donorsInWindow: summary.donorDeactivations.length,
+        totalBacklog:  summary.totalDeactivated,
+        byReason:      summary.byReason,
+      },
+      rows,
+    });
+  });
+
+  /**
+   * POST /api/email/deactivations/:id/restore
+   * Clears deactivatedAt + reason, resets bounceCount, re-syncs the contact
+   * to SendGrid. Gated by EMAIL_DEACTIVATION_RESTORE_ENABLED.
+   * Body: { note?: string }
+   */
+  app.post("/api/email/deactivations/:id/restore", async (req, res) => {
+    const memberId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(memberId)) {
+      return res.status(400).json({ ok: false, error: "Invalid member id" });
+    }
+    const note = typeof req.body?.note === "string" ? req.body.note : "";
+    try {
+      const result = await restoreMember(memberId, note);
+      if (!result.ok) {
+        const status = result.reason === "restore_disabled" ? 409
+                     : result.reason === "not_found"        ? 404
+                     : result.reason === "not_deactivated"  ? 409
+                     : 500;
+        return res.status(status).json(result);
+      }
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[email/deactivations/restore] failed:", err);
+      return res.status(500).json({ ok: false, error: err?.message || "unknown" });
+    }
+  });
+
+  /**
+   * POST /api/email/founder-digest/preview
+   * Renders the digest HTML + subject WITHOUT sending it. Useful for tuning.
+   */
+  app.post("/api/email/founder-digest/preview", (_req, res) => {
+    const summary = buildDigestSummary();
+    const { subject, html } = renderFounderDigest(summary);
+    res.json({ ok: true, subject, html, summary });
+  });
+
+  /**
+   * POST /api/email/founder-digest/run
+   * Manually trigger a digest send (honors automation kill-switch).
+   */
+  app.post("/api/email/founder-digest/run", async (_req, res) => {
+    try {
+      const result = await runFounderDigestNow();
+      if (!result.ran) return res.status(409).json({ ok: false, ...result });
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[email/founder-digest/run] failed:", err);
+      return res.status(500).json({ ok: false, error: err?.message || "unknown" });
+    }
+  });
+
+  /**
+   * POST /api/email/donors/recompute
+   * Manually trigger the donor-flag safety-net recompute.
+   */
+  app.post("/api/email/donors/recompute", (_req, res) => {
+    try {
+      const result = recomputeDonors();
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[email/donors/recompute] failed:", err);
+      return res.status(500).json({ ok: false, error: err?.message || "unknown" });
+    }
   });
 
   /**

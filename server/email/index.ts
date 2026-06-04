@@ -70,6 +70,7 @@ export {
   stopEmailCrons,
   listEmailCrons,
   runSegmentationNow,
+  runFounderDigestNow,
 } from "./cron";
 
 // ─── Phase B: SendGrid Event Webhook ─────────────────────────────────────────
@@ -80,3 +81,23 @@ export {
   handleSendGridWebhook,
   verifyWebhookSignature,
 } from "./webhook";
+
+// ─── Phase B.5: Deactivations dashboard + Founder digest ────────────────────
+export {
+  listDeactivations,
+  buildDigestSummary,
+  restoreMember,
+  recomputeDonors,
+  categorizeReason,
+  type DeactivationRow,
+  type DigestSummary,
+  type ListFilters as DeactivationListFilters,
+} from "./deactivations";
+export {
+  sendFounderDigest,
+  renderFounderDigest,
+} from "./founder-digest";
+export {
+  buildFounderDigestHtml,
+  buildFounderDigestSubject,
+} from "./templates/founder-digest";

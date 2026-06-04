@@ -113,13 +113,16 @@ function evaluateMember(member: Member): MemberWithCustomFields {
     bounceSuppressed,
   });
 
-  const isDonor = data.getCompletedDonationCountByEmail(member.email) > 0;
+  // Phase B.5: is_donor now lives on the member row (set by the donations
+  // flow on first completed donation, recomputed nightly as safety-net).
+  // We no longer read donations directly here — that's the donor-recompute
+  // job's responsibility, and it runs immediately before segmentation.
+  const isDonor = member.isDonor === 1;
 
   const dirty =
-    member.segment !== segment ||
-    // For now we don't store is_donor locally — SendGrid is the source of
-    // record for that custom field. So we ALWAYS push it on the sync. Cheap
-    // because syncAllMembers batches.
+    member.engagementSegment !== segment ||
+    // Always push custom fields so SendGrid is_donor stays current (cheap;
+    // syncAllMembers batches).
     true;
 
   return {
@@ -164,9 +167,11 @@ export async function recalculateSegments(now: Date = new Date()): Promise<Recal
     if (!m.churchId) continue;
     try {
       const evaluated = evaluateMember(m);
-      // Persist segment change locally; SendGrid sync follows in phase 2.
-      if (m.segment !== evaluated.segment) {
-        data.updateMember(m.id, { segment: evaluated.segment });
+      // Persist engagement segment locally; SendGrid sync follows in phase 2.
+      // The human-managed `segment` column is intentionally not touched here
+      // — see shared/schema.ts for the two-axis design.
+      if (m.engagementSegment !== evaluated.segment) {
+        data.updateMember(m.id, { engagementSegment: evaluated.segment });
       }
       (evaluatedByChurch[m.churchId] ||= []).push(evaluated);
     } catch (err) {

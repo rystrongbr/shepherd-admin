@@ -176,26 +176,39 @@ function normalize(event: Record<string, unknown>): NormalizedEvent | null {
 
 // ─── Member-state reactions ──────────────────────────────────────────────────
 
+// Phase B.5: deactivation lives on its own pair of columns (deactivatedAt +
+// deactivationReason). The legacy `segment` column is NOT touched here — it
+// remains a human-managed label (new_visitor/regular/volunteer/inactive/donor).
+// The founder dashboard reviews these rows before any visibility to church
+// admins. Restore (Phase B.5) clears these two fields.
 function deactivateMember(member: Member, reasonLabel: string, log = logger): void {
-  if (member.segment === "inactive") return;
-  data.updateMember(member.id, { segment: "inactive" });
+  if (member.deactivatedAt) return; // already deactivated; idempotent no-op
+  data.updateMember(member.id, {
+    deactivatedAt: new Date().toISOString(),
+    deactivationReason: reasonLabel,
+  });
   log.info("email.webhook.member.deactivated", {
     memberId: member.id, email: member.email, reason: reasonLabel,
   });
   data.recordActivity({
     churchId: member.churchId,
     type: "email_sent",
-    description: `${member.firstName} ${member.lastName} auto-inactivated: ${reasonLabel}`,
+    description: `${member.firstName} ${member.lastName} auto-deactivated: ${reasonLabel}`,
     createdAt: new Date().toISOString(),
     meta: JSON.stringify({ memberId: member.id, reason: reasonLabel, auto: true }),
   });
 }
 
 function setUnsubscribed(member: Member, reasonLabel: string, log = logger): void {
-  const patch: { unsubscribedAt: string; segment?: string } = {
-    unsubscribedAt: new Date().toISOString(),
+  const now = new Date().toISOString();
+  const patch: { unsubscribedAt: string; deactivatedAt?: string; deactivationReason?: string } = {
+    unsubscribedAt: now,
   };
-  if (member.segment !== "inactive") patch.segment = "inactive";
+  // Unsubscribes and spam reports are also deactivations — capture both.
+  if (!member.deactivatedAt) {
+    patch.deactivatedAt = now;
+    patch.deactivationReason = reasonLabel;
+  }
   data.updateMember(member.id, patch);
   log.info("email.webhook.member.unsubscribed", {
     memberId: member.id, email: member.email, reason: reasonLabel,
@@ -300,10 +313,14 @@ function applyEvent(event: NormalizedEvent): void {
     }
 
     case "group_resubscribe": {
-      // Member opted back in to a specific group — keep the unsubscribedAt
-      // for audit but clear the segment block.
-      if (member.segment === "inactive") {
-        data.updateMember(member.id, { segment: "regular" });
+      // Member opted back in to a specific group. Per Phase B.5 design, only
+      // clear deactivation — leave unsubscribedAt as historical record. The
+      // legacy `segment` column is not touched (human-managed).
+      if (member.deactivatedAt) {
+        data.updateMember(member.id, {
+          deactivatedAt: "",
+          deactivationReason: "",
+        });
         log.info("email.webhook.member.resubscribed", { from: "group_resubscribe" });
       }
       break;

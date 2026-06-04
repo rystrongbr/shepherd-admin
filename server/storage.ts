@@ -245,6 +245,12 @@ addColumnIfMissing("members",  "sendgrid_contact_id",      "TEXT NOT NULL DEFAUL
 addColumnIfMissing("members",  "unsubscribed_at",          "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("members",  "bounce_count",             "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("members",  "home_zip",                 "TEXT NOT NULL DEFAULT ''");
+// Phase B.5 additions — see shared/schema.ts members table for field docs.
+addColumnIfMissing("members",  "engagement_segment",       "TEXT NOT NULL DEFAULT 'new'");
+addColumnIfMissing("members",  "deactivated_at",           "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("members",  "deactivation_reason",      "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("members",  "is_donor",                 "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("members",  "donor_since",              "TEXT NOT NULL DEFAULT ''");
 
 // Seed demo data. Extracted into a function so the /api/demo/reset endpoint
 // can call it after wiping. Called at boot only when ALLOW_DEMO_SEED=true AND
@@ -470,6 +476,31 @@ export interface IStorage {
   getCompletedDonationCountByEmail(email: string): number;
   /** Most recent open/click occurredAt for a member (used by segmentation). Returns ISO string or undefined. */
   getLastEngagementForMember(memberId: number): string | undefined;
+
+  // ─── Phase B.5 additions ───────────────────────────
+  /**
+   * Members with deactivatedAt != "" in descending recency order.
+   * Used by the founder dashboard + nightly digest. The `sinceIso` filter is
+   * inclusive and applied to deactivatedAt; pass "" to get all.
+   */
+  listDeactivatedMembers(sinceIso: string): Member[];
+  /**
+   * Count of deactivations between two ISO timestamps (inclusive, exclusive).
+   * Used by the digest "since yesterday" summary.
+   */
+  countDeactivationsBetween(fromIso: string, toIso: string): number;
+  /**
+   * Clear deactivatedAt + deactivationReason on a member and reset bounceCount.
+   * If clearUnsubscribe is true, also clears unsubscribedAt. The caller is
+   * responsible for deciding whether the unsubscribe was honest — we never
+   * override a genuine user unsubscribe in the default code path.
+   */
+  restoreDeactivatedMember(memberId: number, clearUnsubscribe: boolean): Member | undefined;
+  /**
+   * Recompute is_donor + donor_since across all members from the donations
+   * table. Returns counts. Safety-net job.
+   */
+  recomputeDonorFlags(): { updated: number; total: number };
 }
 
 export const storage: IStorage = {
@@ -716,6 +747,87 @@ export const storage: IStorage = {
       ))
       .get();
     return Number(row?.c ?? 0);
+  },
+
+  // ─── Phase B.5 implementations ────────────────────────────────────────
+  listDeactivatedMembers: (sinceIso) => {
+    const baseCond = sql`${members.deactivatedAt} != ''`;
+    const whereClause = sinceIso
+      ? and(baseCond, gte(members.deactivatedAt, sinceIso))
+      : baseCond;
+    return db
+      .select()
+      .from(members)
+      .where(whereClause)
+      .orderBy(desc(members.deactivatedAt))
+      .all();
+  },
+
+  countDeactivationsBetween: (fromIso, toIso) => {
+    const row = db
+      .select({ c: sql<number>`count(*)` })
+      .from(members)
+      .where(
+        and(
+          sql`${members.deactivatedAt} != ''`,
+          gte(members.deactivatedAt, fromIso),
+          sql`${members.deactivatedAt} < ${toIso}`,
+        ),
+      )
+      .get();
+    return Number(row?.c ?? 0);
+  },
+
+  restoreDeactivatedMember: (memberId, clearUnsubscribe) => {
+    const patch: Partial<typeof members.$inferInsert> = {
+      deactivatedAt: "",
+      deactivationReason: "",
+      bounceCount: 0,
+    };
+    if (clearUnsubscribe) {
+      patch.unsubscribedAt = "";
+    }
+    return db
+      .update(members)
+      .set(patch)
+      .where(eq(members.id, memberId))
+      .returning()
+      .get();
+  },
+
+  recomputeDonorFlags: () => {
+    const all = db.select().from(members).all();
+    let updated = 0;
+    for (const m of all) {
+      if (!m.email) continue;
+      const normalized = m.email.toLowerCase().trim();
+      const row = db
+        .select({
+          c: sql<number>`count(*)`,
+          first: sql<string>`min(${donations.completedAt})`,
+        })
+        .from(donations)
+        .where(and(
+          eq(donations.email, normalized),
+          eq(donations.status, "completed"),
+        ))
+        .get();
+      const count = Number(row?.c ?? 0);
+      const wantIsDonor = count > 0 ? 1 : 0;
+      const wantSince = count > 0 ? String(row?.first ?? "") : "";
+      if (m.isDonor !== wantIsDonor || (wantIsDonor === 1 && !m.donorSince)) {
+        db.update(members)
+          .set({
+            isDonor: wantIsDonor,
+            // Never overwrite an existing donor_since.
+            donorSince: m.donorSince || wantSince,
+          })
+          .where(eq(members.id, m.id))
+          .run();
+        updated++;
+      }
+    }
+    return { updated, total: all.length };
   },
 
   getLastEngagementForMember: (memberId) => {
