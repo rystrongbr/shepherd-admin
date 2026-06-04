@@ -17,6 +17,10 @@ import {
   buildWelcomeEmailHtml,
   provisionChurch,
   emailConfig,
+  // Phase B
+  handleSendGridWebhook,
+  listEmailCrons,
+  runSegmentationNow,
   type SendGridConfig,
 } from "./email";
 // sgSendMail is module-private — routes.ts only uses it via these two
@@ -57,6 +61,9 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/chats",
     "/donations",
     "/church-signup",
+    // SendGrid event webhook — authenticated via Ed25519 signature in handler,
+    // not via the admin bearer token. Must be in the public allowlist.
+    "/email/webhook",
   ];
   if (PUBLIC.some(p => req.path.startsWith(p))) return next();
   // Also allow GET /affiliations/:sessionId (for session restore)
@@ -732,7 +739,49 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       dryRun: emailConfig.dryRun,
       webhookConfigured: !!emailConfig.webhookPublicKey,
       appUrl: emailConfig.appUrl,
+      // Phase B additions
+      bounceLimits: {
+        hard: emailConfig.hardBounceLimit,
+        soft: emailConfig.softBounceLimit,
+      },
+      segmentation: {
+        dormantAfterDays: emailConfig.dormantAfterDays,
+        inactiveAfterDays: emailConfig.inactiveAfterDays,
+        newWindowDays: emailConfig.newWindowDays,
+      },
+      crons: listEmailCrons(),
     });
+  });
+
+  /**
+   * POST /api/email/webhook
+   * SendGrid event webhook receiver. Signature verification happens inside
+   * the handler (Ed25519). The handler responds 200 even on partial failure
+   * so SendGrid doesn't retry-storm — individual event errors are logged and
+   * the audit row is still written.
+   *
+   * NOTE: Raw-body middleware for this route is registered in server/index.ts
+   * BEFORE express.json(). Do not add other body parsers here.
+   */
+  app.post("/api/email/webhook", handleSendGridWebhook);
+
+  /**
+   * POST /api/email/segmentation/run
+   * Manually triggers a segmentation recompute (same code path as the
+   * nightly cron). Useful for testing thresholds and previewing the next
+   * run's effect. Respects EMAIL_AUTOMATION_ENABLED — returns 409 if off.
+   */
+  app.post("/api/email/segmentation/run", async (_req, res) => {
+    try {
+      const result = await runSegmentationNow();
+      if (!result.ran) {
+        return res.status(409).json({ ok: false, reason: result.reason });
+      }
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[email/segmentation/run] failed:", err);
+      return res.status(500).json({ ok: false, error: err?.message || "unknown" });
+    }
   });
 
   /**
