@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
+import { startEmailCrons } from "./email";
 import { createServer } from "http";
 import path from "path";
 
@@ -30,6 +31,18 @@ app.post(
   (req, _res, next) => {
     // Hand off to the route handler (registered later in registerDonationRoutes).
     // The handler reads req.body as a Buffer.
+    next();
+  },
+);
+
+// SendGrid event webhook also needs the raw body so the Ed25519 signature can
+// be verified (the signed payload is `timestamp + rawBody` as bytes).
+// Registered BEFORE express.json() for the same reason as the Stripe webhook.
+app.post(
+  "/api/email/webhook",
+  express.raw({ type: "application/json" }),
+  (_req, _res, next) => {
+    // Hand off to the handler registered later in registerRoutes().
     next();
   },
 );
@@ -83,6 +96,13 @@ app.use((req, res, next) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+
+  // Start email module cron jobs (segmentation, etc.). The crons are always
+  // registered, but each handler short-circuits when EMAIL_AUTOMATION_ENABLED
+  // is false (defense in depth). Reading process.env at run-time inside the
+  // handler also means flipping the flag in Railway takes effect without a
+  // redeploy.
+  startEmailCrons();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

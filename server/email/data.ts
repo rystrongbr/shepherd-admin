@@ -83,6 +83,14 @@ export const data = {
 
   // ─── Email events (webhook log) ───────────────────────────────────────────
   recordEmailEvent: (input: InsertEmailEvent): EmailEvent => storage.recordEmailEvent(input),
+
+  // ─── Phase B — segmentation + webhook handler support ────────────────────
+  getAllMembers: (): Member[] => storage.getAllMembers(),
+  incrementBounceCount: (memberId: number): number => storage.incrementBounceCount(memberId),
+  getCompletedDonationCountByEmail: (email: string): number =>
+    storage.getCompletedDonationCountByEmail(email),
+  getLastEngagementForMember: (memberId: number): string | undefined =>
+    storage.getLastEngagementForMember(memberId),
 };
 
 export type EmailData = typeof data;

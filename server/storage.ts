@@ -5,7 +5,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   churches, members, campaigns, sequences, activities, insights, affiliations, appUsers, chats,
-  bibleTopicContent, sequenceEnrollments, emailEvents,
+  bibleTopicContent, sequenceEnrollments, emailEvents, donations,
   type Church, type InsertChurch,
   type Member, type InsertMember,
   type Campaign, type InsertCampaign,
@@ -460,6 +460,16 @@ export interface IStorage {
   recordEmailEvent(data: InsertEmailEvent): EmailEvent;
   getMemberByEmail(email: string): Member | undefined;
   getMemberBySendgridContactId(contactId: string): Member | undefined;
+
+  // ─── Phase B additions ─────────────────────────────────────────────────
+  /** All members across all churches (used by daily segmentation cron). */
+  getAllMembers(): Member[];
+  /** Atomically increment bounce_count by 1 and return the new value. */
+  incrementBounceCount(memberId: number): number;
+  /** Count of completed donations for a given email (used to compute is_donor). */
+  getCompletedDonationCountByEmail(email: string): number;
+  /** Most recent open/click occurredAt for a member (used by segmentation). Returns ISO string or undefined. */
+  getLastEngagementForMember(memberId: number): string | undefined;
 }
 
 export const storage: IStorage = {
@@ -677,5 +687,48 @@ export const storage: IStorage = {
   getMemberBySendgridContactId: (contactId) => {
     if (!contactId) return undefined;
     return db.select().from(members).where(eq(members.sendgridContactId, contactId)).get();
+  },
+
+  // ─── Phase B additions ──────────────────────────────────────────────────────────
+  getAllMembers: () => db.select().from(members).all(),
+
+  incrementBounceCount: (memberId) => {
+    // Read-modify-write inside a single statement keeps this safe under
+    // sequential webhook bursts (webhooks are processed serially per Express request).
+    const row = db
+      .update(members)
+      .set({ bounceCount: sql`${members.bounceCount} + 1` })
+      .where(eq(members.id, memberId))
+      .returning({ bounceCount: members.bounceCount })
+      .get();
+    return row?.bounceCount ?? 0;
+  },
+
+  getCompletedDonationCountByEmail: (email) => {
+    if (!email) return 0;
+    const normalized = email.toLowerCase().trim();
+    const row = db
+      .select({ c: sql<number>`count(*)` })
+      .from(donations)
+      .where(and(
+        eq(donations.email, normalized),
+        eq(donations.status, "completed"),
+      ))
+      .get();
+    return Number(row?.c ?? 0);
+  },
+
+  getLastEngagementForMember: (memberId) => {
+    const row = db
+      .select({ occurredAt: emailEvents.occurredAt })
+      .from(emailEvents)
+      .where(and(
+        eq(emailEvents.memberId, memberId),
+        or(eq(emailEvents.eventType, "open"), eq(emailEvents.eventType, "click")),
+      ))
+      .orderBy(desc(emailEvents.occurredAt))
+      .limit(1)
+      .get();
+    return row?.occurredAt;
   },
 };

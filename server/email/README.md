@@ -181,3 +181,122 @@ curl -X POST http://localhost:5000/api/email/churches/1/provision
 For end-to-end testing with a real SendGrid account, set `EMAIL_DRY_RUN=false`
 and use a test SendGrid sub-account so you can verify deliverability without
 risking your main sending reputation.
+
+---
+
+## Phase B: Webhook handler + Segmentation cron
+
+Phase B adds two pieces of automation on top of the Phase A foundation:
+
+1. **SendGrid Event Webhook handler** (`webhook.ts`) — receives delivery /
+   bounce / open / click / unsubscribe / spam events from SendGrid and
+   updates member state (bounce counters, unsubscribed flag, deactivation).
+2. **Nightly segmentation cron** (`cron.ts` + `segmentation.ts`) — recomputes
+   each member's engagement segment once per day and pushes the result to
+   SendGrid as a custom field for list filtering.
+
+### File layout (Phase B additions)
+
+```
+server/email/
+├── webhook.ts         # Ed25519 signature verify + event dispatch
+├── segmentation.ts    # computeSegment (pure) + recalculateSegments
+├── cron.ts            # node-cron registration + start/stop helpers
+```
+
+All Phase B files obey the same four rules as Phase A — only `data.ts`
+imports `../storage`, only `index.ts` is the public surface, etc.
+
+### Webhook: `POST /api/email/webhook`
+
+- Authenticated by Ed25519 signature, NOT by the admin bearer token. The
+  route is added to the `PUBLIC` allowlist in `server/routes.ts`.
+- Raw body middleware is registered in `server/index.ts` BEFORE
+  `express.json()` — the signed payload is `timestamp + rawBody` as bytes,
+  so the body cannot be JSON-parsed before verification.
+- Returns **503** if `EMAIL_SENDGRID_WEBHOOK_PUBLIC_KEY` is not set
+  (intentional — defense against accidentally accepting unsigned events).
+- Returns **401** on bad signature, **200** on success (even with partial
+  per-event failures) so SendGrid does not retry-storm.
+
+**Events handled:**
+
+| SendGrid event       | Effect                                            |
+| -------------------- | ------------------------------------------------- |
+| `delivered`          | Reset `bounceCount` to 0                          |
+| `open`               | Bump `lastEngagedAt`                              |
+| `click`              | Bump `lastEngagedAt`                              |
+| `bounce` (hard)      | Increment counter; deactivate at `hardBounceLimit`|
+| `bounce` (soft)      | Increment counter; deactivate at `softBounceLimit`|
+| `dropped`            | Increment counter (treated as hard)               |
+| `unsubscribe`        | Set `unsubscribedAt`, mark inactive               |
+| `group_unsubscribe`  | Same as `unsubscribe`                             |
+| `spamreport`         | Immediate deactivate, regardless of counters      |
+| `group_resubscribe`  | Clear `unsubscribedAt` if previously inactive     |
+
+### Segmentation: 5-segment model
+
+`computeSegment(inputs)` is a **pure function** of a member's state and the
+current time. It returns one of:
+
+| Segment    | Definition                                                       |
+| ---------- | ---------------------------------------------------------------- |
+| `inactive` | unsubscribed, bounced past limit, or no engagement in 90+ days   |
+| `dormant`  | no engagement in 30–90 days                                      |
+| `new`      | joined within last 21 days                                       |
+| `engaged`  | engaged within 30 days **AND** is a donor                        |
+| `active`   | engaged within 30 days, not a donor                              |
+
+Thresholds are tunable via env vars (`EMAIL_DORMANT_AFTER_DAYS`,
+`EMAIL_INACTIVE_AFTER_DAYS`, `EMAIL_NEW_WINDOW_DAYS`).
+
+`recalculateSegments()` runs in two phases:
+
+1. **DB phase** — compute new segment for every active member, write to DB.
+2. **SendGrid phase** — for each church with at least one segment change,
+   call `syncAllMembers(church)` to push updated custom fields upstream.
+
+### Cron: 3 AM CT daily
+
+- Schedule: `0 3 * * *` (configurable via `EMAIL_SEGMENTATION_CRON`)
+- Timezone: `America/Chicago` (configurable via `EMAIL_SEGMENTATION_TZ`)
+- Always **registered** at boot, but the handler short-circuits when
+  `EMAIL_AUTOMATION_ENABLED=false`. The env var is read live on each tick,
+  so you can flip the flag in Railway and the next run respects it without
+  a redeploy.
+
+Manual trigger for testing:
+
+```bash
+curl -X POST https://admin.myshepherdapp.church/api/email/segmentation/run \
+  -H "Authorization: Bearer $ADMIN_PASSWORD"
+```
+
+### One-time SendGrid dashboard setup (manual)
+
+Before turning on the webhook:
+
+1. SendGrid → **Settings** → **Mail Settings** → **Event Webhook**
+2. Set HTTP Post URL: `https://admin.myshepherdapp.church/api/email/webhook`
+3. Select events: Delivered, Opened, Clicked, Bounced, Dropped,
+   Unsubscribed, Group Unsubscribe, Group Resubscribe, Spam Report
+4. Toggle **Signed Event Webhook** ON, copy the generated public key
+5. Set Railway env var:
+   `EMAIL_SENDGRID_WEBHOOK_PUBLIC_KEY=<base64 key from SendGrid>`
+6. Test signature in SendGrid UI → verify a 200 response
+
+### Required Phase B env vars
+
+| Variable                              | Required | Default                |
+| ------------------------------------- | -------- | ---------------------- |
+| `EMAIL_SENDGRID_WEBHOOK_PUBLIC_KEY`   | yes      | (none — 503 if unset)  |
+| `EMAIL_HARD_BOUNCE_LIMIT`             | no       | `1`                    |
+| `EMAIL_SOFT_BOUNCE_LIMIT`             | no       | `3`                    |
+| `EMAIL_DORMANT_AFTER_DAYS`            | no       | `30`                   |
+| `EMAIL_INACTIVE_AFTER_DAYS`           | no       | `90`                   |
+| `EMAIL_NEW_WINDOW_DAYS`               | no       | `21`                   |
+| `EMAIL_SEGMENTATION_CRON`             | no       | `0 3 * * *`            |
+| `EMAIL_SEGMENTATION_TZ`               | no       | `America/Chicago`      |
+
+All Phase A env vars (`EMAIL_AUTOMATION_ENABLED`, `EMAIL_DRY_RUN`,
+`EMAIL_APP_URL`, etc.) continue to apply.
