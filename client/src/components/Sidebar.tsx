@@ -1,6 +1,8 @@
 import { useLocation, Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import {
-  LayoutDashboard, Users, Mail, GitBranch, Settings, ChevronRight, TrendingUp
+  LayoutDashboard, Users, Mail, GitBranch, Settings, ChevronRight, TrendingUp, UserMinus
 } from "lucide-react";
 
 const navItems = [
@@ -11,12 +13,33 @@ const navItems = [
   { label: "Insights",  icon: TrendingUp,      path: "/insights" },
 ];
 
-const bottomItems = [
-  { label: "Settings", icon: Settings, path: "/settings" },
-];
+interface DeactivationsSummaryResp {
+  ok: true;
+  summary: { newInWindow: number };
+}
 
 export default function Sidebar() {
   const [location] = useLocation();
+
+  // Lightweight poll so the Deactivations badge stays fresh. We only need the
+  // summary (no rows) but the same endpoint returns both — request limit=1.
+  const { data: deactivationsData } = useQuery<DeactivationsSummaryResp>({
+    queryKey: ["/api/email/deactivations", "sidebar-badge"],
+    queryFn: () => apiRequest("GET", "/api/email/deactivations?limit=1").then(r => r.json()),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const newDeactivations = deactivationsData?.summary?.newInWindow ?? 0;
+
+  const manageItems: Array<{
+    label: string;
+    icon: any;
+    path: string;
+    badge?: number;
+  }> = [
+    { label: "Deactivations", icon: UserMinus, path: "/deactivations", badge: newDeactivations },
+    { label: "Settings",      icon: Settings,  path: "/settings" },
+  ];
 
   return (
     <aside className="sidebar">
@@ -58,7 +81,7 @@ export default function Sidebar() {
         })}
 
         <div className="sidebar-section-label" style={{ marginTop: "1rem" }}>Manage</div>
-        {bottomItems.map((item) => {
+        {manageItems.map((item) => {
           const isActive = location === item.path;
           return (
             <Link
@@ -66,9 +89,33 @@ export default function Sidebar() {
               href={item.path}
               className={`sidebar-item ${isActive ? "active" : ""}`}
               data-testid={`nav-${item.label.toLowerCase()}`}
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
             >
-              <item.icon size={16} />
-              {item.label}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                <item.icon size={16} />
+                {item.label}
+              </span>
+              {item.badge && item.badge > 0 ? (
+                <span
+                  data-testid={`badge-${item.label.toLowerCase()}`}
+                  style={{
+                    background: "#c69b00",
+                    color: "white",
+                    fontSize: "0.65rem",
+                    fontWeight: 700,
+                    minWidth: "1.1rem",
+                    height: "1.1rem",
+                    borderRadius: "0.55rem",
+                    padding: "0 0.35rem",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    lineHeight: 1,
+                  }}
+                >
+                  {item.badge > 99 ? "99+" : item.badge}
+                </span>
+              ) : null}
             </Link>
           );
         })}

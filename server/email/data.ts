@@ -91,6 +91,16 @@ export const data = {
     storage.getCompletedDonationCountByEmail(email),
   getLastEngagementForMember: (memberId: number): string | undefined =>
     storage.getLastEngagementForMember(memberId),
+
+  // ─── Phase B.5 — deactivations dashboard + founder digest + donor recompute
+  listDeactivatedMembers: (sinceIso: string): Member[] =>
+    storage.listDeactivatedMembers(sinceIso),
+  countDeactivationsBetween: (fromIso: string, toIso: string): number =>
+    storage.countDeactivationsBetween(fromIso, toIso),
+  restoreDeactivatedMember: (memberId: number, clearUnsubscribe: boolean): Member | undefined =>
+    storage.restoreDeactivatedMember(memberId, clearUnsubscribe),
+  recomputeDonorFlags: (): { updated: number; total: number } =>
+    storage.recomputeDonorFlags(),
 };
 
 export type EmailData = typeof data;

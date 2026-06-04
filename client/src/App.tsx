@@ -13,6 +13,7 @@ import SequencesPage from "@/pages/SequencesPage";
 import SettingsPage from "@/pages/SettingsPage";
 import OnboardPage from "@/pages/OnboardPage";
 import InsightsPage from "@/pages/InsightsPage";
+import DeactivationsPage from "@/pages/DeactivationsPage";
 import NotFound from "@/pages/not-found";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 
@@ -53,6 +54,7 @@ export default function App() {
                     <Route path="/campaigns" component={CampaignsPage} />
                     <Route path="/sequences" component={SequencesPage} />
                     <Route path="/insights"  component={InsightsPage} />
+                    <Route path="/deactivations" component={DeactivationsPage} />
                     <Route path="/settings"  component={SettingsPage} />
                     <Route component={NotFound} />
                   </Switch>

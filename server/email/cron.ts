@@ -22,6 +22,8 @@ import type { ScheduledTask } from "node-cron";
 import { emailConfig } from "./config";
 import { logger } from "./logger";
 import { recalculateSegments } from "./segmentation";
+import { sendFounderDigest } from "./founder-digest";
+import { recomputeDonors } from "./deactivations";
 
 let started = false;
 const activeJobs: { name: string; task: ScheduledTask }[] = [];
@@ -85,6 +87,55 @@ export function startEmailCrons(): void {
     timezone,
     automationEnabled: isAutomationEnabled(),
   });
+
+  // ─── Founder digest (daily, Phase B.5) ─────────────────────────
+  // Sends the deactivations summary to admin@barabove.app at 08:00 CT.
+  // Same kill-switch + live env-read pattern as segmentation.
+  const digestSchedule = emailConfig.founderDigestCronSchedule;
+  const digestTimezone = emailConfig.founderDigestCronTz;
+
+  if (!cron.validate(digestSchedule)) {
+    logger.error("email.cron.invalid_schedule", {
+      schedule: digestSchedule, job: "founder_digest",
+    });
+  } else {
+    const digestTask = cron.schedule(
+      digestSchedule,
+      async () => {
+        if (!isAutomationEnabled()) {
+          logger.info("email.cron.founder_digest.skipped", { reason: "automation_disabled" });
+          return;
+        }
+        const startedAt = Date.now();
+        logger.info("email.cron.founder_digest.start", {
+          schedule: digestSchedule, timezone: digestTimezone,
+        });
+        try {
+          // Run the donor-flag safety-net BEFORE the digest, so any rows
+          // flagged today are reflected in the donor-priority section.
+          const donorResult = recomputeDonors();
+          const sendResult = await sendFounderDigest();
+          logger.info("email.cron.founder_digest.done", {
+            durationMs: Date.now() - startedAt,
+            donorRecompute: donorResult,
+            sendResult,
+          });
+        } catch (err) {
+          logger.error("email.cron.founder_digest.failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      },
+      { timezone: digestTimezone },
+    );
+    activeJobs.push({ name: "founder_digest", task: digestTask });
+    logger.info("email.cron.registered", {
+      name: "founder_digest",
+      schedule: digestSchedule,
+      timezone: digestTimezone,
+      automationEnabled: isAutomationEnabled(),
+    });
+  }
 }
 
 /**
@@ -113,13 +164,21 @@ export function listEmailCrons(): { name: string; schedule: string; timezone: st
   // node-cron task objects do not expose their original schedule string;
   // we re-derive from config since we only register one job today.
   if (activeJobs.length === 0) return [];
-  return [
+  const out: { name: string; schedule: string; timezone: string }[] = [
     {
       name: "segmentation",
       schedule: emailConfig.segmentationCronSchedule,
       timezone: emailConfig.segmentationCronTz,
     },
   ];
+  if (activeJobs.some((j) => j.name === "founder_digest")) {
+    out.push({
+      name: "founder_digest",
+      schedule: emailConfig.founderDigestCronSchedule,
+      timezone: emailConfig.founderDigestCronTz,
+    });
+  }
+  return out;
 }
 
 /**
@@ -133,4 +192,17 @@ export async function runSegmentationNow(): Promise<{ ran: boolean; reason?: str
   }
   await recalculateSegments();
   return { ran: true };
+}
+
+/**
+ * Run the founder digest job once, on demand (Phase B.5). Used by the admin
+ * endpoint POST /api/email/founder-digest/run for testing. Honors the
+ * automation flag the same way the cron does.
+ */
+export async function runFounderDigestNow(): Promise<{ ran: boolean; reason?: string; detail?: unknown }> {
+  if (!isAutomationEnabled()) {
+    return { ran: false, reason: "automation_disabled" };
+  }
+  const result = await sendFounderDigest();
+  return { ran: true, detail: result };
 }

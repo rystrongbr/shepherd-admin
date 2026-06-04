@@ -64,6 +64,27 @@ export interface EmailModuleConfig {
   segmentationCronSchedule: string;
   /** IANA timezone for the segmentation cron schedule. */
   segmentationCronTz: string;
+
+  // ─── Phase B.5: founder dashboard + digest ────────────────────────
+  /**
+   * Email address that receives the internal founder digest (daily summary
+   * of deactivations). Defaults to admin@barabove.app — the Bar Above admin
+   * alias backed by barabovellc5@gmail.com.
+   */
+  founderDigestTo: string;
+  /**
+   * Cron schedule for the daily founder digest, node-cron format.
+   * Default: "0 8 * * *" America/Chicago = 08:00 Central daily.
+   */
+  founderDigestCronSchedule: string;
+  /** IANA timezone for the founder digest cron. */
+  founderDigestCronTz: string;
+  /**
+   * Whether the "Restore" action on the deactivations dashboard is allowed.
+   * Default false — dashboard is read-only until we explicitly turn this on
+   * after observing for a couple weeks. (Phase B.5.)
+   */
+  deactivationRestoreEnabled: boolean;
 }
 
 function readBool(name: string, defaultValue: boolean): boolean {
@@ -104,4 +125,10 @@ export const emailConfig: EmailModuleConfig = {
   // Phase B — Cron schedule (defaults to 03:00 America/Chicago daily)
   segmentationCronSchedule: readString("EMAIL_SEGMENTATION_CRON_SCHEDULE", "0 3 * * *"),
   segmentationCronTz:       readString("EMAIL_SEGMENTATION_CRON_TZ",       "America/Chicago"),
+
+  // Phase B.5 — founder digest + dashboard restore gate
+  founderDigestTo:           readString("EMAIL_FOUNDER_DIGEST_TO",           "admin@barabove.app"),
+  founderDigestCronSchedule: readString("EMAIL_FOUNDER_DIGEST_CRON_SCHEDULE", "0 8 * * *"),
+  founderDigestCronTz:       readString("EMAIL_FOUNDER_DIGEST_CRON_TZ",       "America/Chicago"),
+  deactivationRestoreEnabled: readBool("EMAIL_DEACTIVATION_RESTORE_ENABLED",  false),
 };

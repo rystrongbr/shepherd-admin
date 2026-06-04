@@ -47,6 +47,25 @@ export const members = sqliteTable("members", {
   sendgridContactId: text("sendgrid_contact_id").notNull().default(""),
   unsubscribedAt: text("unsubscribed_at").notNull().default(""),
   bounceCount: integer("bounce_count").notNull().default(0),
+
+  // Phase B.5 — engagement segment is a separate, machine-computed axis from
+  // `segment` above (which is human-managed: new_visitor/regular/volunteer/
+  // inactive/donor). The nightly segmentation cron writes here.
+  // Values: new | active | engaged | dormant | inactive.
+  engagementSegment: text("engagement_segment").notNull().default("new"),
+
+  // Phase B.5 — deactivation tracking (separate from natural "inactive" so the
+  // founder dashboard can review false-positives before they're hidden from
+  // church admins).
+  deactivatedAt: text("deactivated_at").notNull().default(""),
+  deactivationReason: text("deactivation_reason").notNull().default(""),
+
+  // Phase B.5 — donor tag (separate from `segment` so engagement and donor
+  // status are independent axes). Flipped to 1 on first completed donation;
+  // never automatically flipped back. A nightly safety-net job recomputes
+  // from the donations table to catch any drift.
+  isDonor: integer("is_donor").notNull().default(0),
+  donorSince: text("donor_since").notNull().default(""),
 });
 
 export const insertMemberSchema = createInsertSchema(members).omit({ id: true });
