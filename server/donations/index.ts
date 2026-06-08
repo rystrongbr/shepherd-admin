@@ -38,7 +38,18 @@ export function registerDonationRoutes(app: Express) {
   app.post("/api/donations/prompt/log", (req: Request, res: Response) => {
     const { userId, trigger } = req.body;
     if (!userId) return res.status(400).json({ error: "userId required" });
-    const allowedTriggers = ["reaction_helped", "manual_button", "share", "long_chat"];
+    // Must match the trigger strings the client sends to showDonationModal()
+    // (app.js): unrecognized values fall back to "manual_button", which silently
+    // mis-attributes the analytics. Keep this list in sync with app.js.
+    const allowedTriggers = [
+      "reaction_helped",
+      "three_positive_actions",
+      "post_signup_donate_intent",
+      "header_button",
+      "manual_button",
+      "share",
+      "long_chat",
+    ];
     const t = allowedTriggers.includes(trigger) ? trigger : "manual_button";
     const prompt = data.logPrompt({ userId, trigger: t, outcome: "shown" });
     res.json({ ok: true, promptId: prompt.id });

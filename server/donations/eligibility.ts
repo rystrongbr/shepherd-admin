@@ -1,13 +1,16 @@
 // Donation prompt eligibility logic.
 // Encodes the cadence rules from my_shepherd_gtm_plan.md (Part 3):
 //
-//   1. Account age >= 7 days
-//   2. >= 3 distinct chats completed
-//   3. At least one positive signal in last 7 days (a 'helped' reaction)
-//   4. No prompt shown in last 14 days
-//   5. No completed donation in last 30 days
-//   6. User has not opted out
-//   7. If they hit 3 consecutive 'maybe_later' dismissals, pause 60 days
+//   1. >= 3 distinct chats completed
+//   2. At least one positive signal in last 7 days (a 'helped' reaction)
+//   3. No prompt shown in last 14 days
+//   4. No completed donation in last 30 days
+//   5. User has not opted out
+//   6. If they hit 3 consecutive 'maybe_later' dismissals, pause 60 days
+//
+// NOTE: the original "account age >= 7 days" gate was removed — the 3-chats +
+// value-signal gates already guard against premature prompts. accountAgeDays is
+// still computed and returned in diagnostics for QA/support visibility.
 //
 // Returns a structured result so the frontend can explain WHY a prompt isn't
 // showing (useful for QA and for support requests like "why am I being asked?").
@@ -16,7 +19,6 @@ import * as data from "./data";
 
 export type EligibilityReason =
   | "eligible"
-  | "account_too_new"
   | "not_enough_chats"
   | "no_value_signal"
   | "prompt_cooldown"
@@ -38,7 +40,6 @@ export interface EligibilityResult {
   };
 }
 
-const MIN_ACCOUNT_AGE_DAYS = 7;
 const MIN_CHAT_COUNT = 3;
 const PROMPT_COOLDOWN_DAYS = 14;
 const DONATION_COOLDOWN_DAYS = 30;
@@ -77,10 +78,6 @@ export function checkEligibility(userId: number): EligibilityResult {
   // Run the gates in order.
   if (optedOut) {
     return { eligible: false, reason: "opted_out", diagnostics };
-  }
-
-  if (accountAgeDays < MIN_ACCOUNT_AGE_DAYS) {
-    return { eligible: false, reason: "account_too_new", diagnostics };
   }
 
   if (chatCount < MIN_CHAT_COUNT) {
