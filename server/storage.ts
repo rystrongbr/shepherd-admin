@@ -272,6 +272,8 @@ addColumnIfMissing("members",  "donor_since",              "TEXT NOT NULL DEFAUL
 // upgrades dev/prod DBs that already created the table from an earlier build.
 addColumnIfMissing("app_users",      "home_church_name",   "TEXT");
 addColumnIfMissing("member_signups", "home_church_name",   "TEXT");
+// Optional ZIP captured at Sign Up (webapp launch feedback).
+addColumnIfMissing("app_users",      "zip_code",           "TEXT");
 
 // Seed demo data. Extracted into a function so the /api/demo/reset endpoint
 // can call it after wiping. Called at boot only when ALLOW_DEMO_SEED=true AND
@@ -458,7 +460,7 @@ export interface IStorage {
   createUser(data: InsertAppUser): AppUser;
   updateUser(id: number, data: Partial<InsertAppUser>): AppUser | undefined;
   updateUserHomeChurchName(userId: number, homeChurchName: string | null): AppUser | undefined;
-  setMagicToken(email: string, token: string, expiry: string, homeChurchName?: string | null): AppUser;
+  setMagicToken(email: string, token: string, expiry: string, profile?: { homeChurchName?: string | null; zipCode?: string | null }): AppUser;
   verifyMagicToken(token: string): AppUser | undefined;
 
   // Chats
@@ -646,19 +648,22 @@ export const storage: IStorage = {
   createUser: (data) => db.insert(appUsers).values({ ...data, email: data.email.toLowerCase() }).returning().get(),
   updateUser: (id, data) => db.update(appUsers).set(data).where(eq(appUsers.id, id)).returning().get(),
 
-  setMagicToken: (email, token, expiry, homeChurchName) => {
+  setMagicToken: (email, token, expiry, profile) => {
+    const homeChurchName = profile?.homeChurchName || null;
+    const zipCode = profile?.zipCode || null;
     const existing = db.select().from(appUsers).where(eq(appUsers.email, email.toLowerCase())).get();
     if (existing) {
       const patch: Partial<InsertAppUser> = { magicToken: token, magicExpiry: expiry };
-      // Only set home church on an existing user when a non-empty value is
-      // provided — never clobber a previously-captured name with null/empty.
+      // Only set these on an existing user when a non-empty value is provided —
+      // never clobber a previously-captured value with null/empty.
       if (homeChurchName) patch.homeChurchName = homeChurchName;
+      if (zipCode) patch.zipCode = zipCode;
       return db.update(appUsers).set(patch)
         .where(eq(appUsers.email, email.toLowerCase())).returning().get()!;
     }
     return db.insert(appUsers).values({
       email: email.toLowerCase(), magicToken: token, magicExpiry: expiry,
-      homeChurchName: homeChurchName || null,
+      homeChurchName, zipCode,
       createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString(),
     }).returning().get();
   },

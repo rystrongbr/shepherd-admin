@@ -142,16 +142,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "email is required" });
 
-    // Optional home church (Sign Up mode). Trim + cap; empty → null. Persisted
-    // on the user row at create/link time so it survives the magic-link round-trip.
+    // Optional Sign Up fields. Trim + normalize; empty → null. Persisted on the
+    // user row at create/link time so they survive the magic-link round-trip.
     const homeChurchName = (typeof req.body.homeChurchName === "string"
       ? req.body.homeChurchName.trim().slice(0, 200) : "") || null;
+    // ZIP: optional, but if provided must be exactly 5 digits.
+    const rawZip = typeof req.body.zipCode === "string" ? req.body.zipCode.trim() : "";
+    if (rawZip && !/^\d{5}$/.test(rawZip)) {
+      return res.status(400).json({ error: "zipCode must be 5 digits" });
+    }
+    const zipCode = rawZip || null;
 
     // Generate a secure token
     const token = randomBytes(32).toString("hex");
     const expiry = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
 
-    storage.setMagicToken(email, token, expiry, homeChurchName);
+    storage.setMagicToken(email, token, expiry, { homeChurchName, zipCode });
 
     // Build magic link URL
     const baseUrl = process.env.APP_URL || "https://app.myshepherdapp.church";
@@ -219,10 +225,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const { googleId, email, name } = req.body;
     if (!googleId || !email) return res.status(400).json({ error: "googleId and email are required" });
 
-    // Optional home church (Sign Up). Trim + cap; empty → null. Set only when
+    // Optional Sign Up fields. Trim + normalize; empty → null. Set only when
     // creating a brand-new account so we never clobber an existing capture.
     const homeChurchName = (typeof req.body.homeChurchName === "string"
       ? req.body.homeChurchName.trim().slice(0, 200) : "") || null;
+    const rawZip = typeof req.body.zipCode === "string" ? req.body.zipCode.trim() : "";
+    if (rawZip && !/^\d{5}$/.test(rawZip)) {
+      return res.status(400).json({ error: "zipCode must be 5 digits" });
+    }
+    const zipCode = rawZip || null;
 
     let user = storage.getUserByGoogleId(googleId);
     if (!user) {
@@ -233,7 +244,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       } else {
         // Create new account
         user = storage.createUser({
-          email, name: name || "", googleId, homeChurchName,
+          email, name: name || "", googleId, homeChurchName, zipCode,
           createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString(),
         });
       }

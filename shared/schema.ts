@@ -166,6 +166,9 @@ export const appUsers = sqliteTable("app_users", {
   // Optional free-text home church name captured at Sign Up. Seeds the B2B
   // church-partnership lead list. Nullable; never required.
   homeChurchName: text("home_church_name"),
+  // Optional 5-digit ZIP captured at Sign Up (for users who skip the
+  // stay-connected modal). Nullable; never required.
+  zipCode: text("zip_code"),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
   lastLoginAt: text("last_login_at").notNull().default(new Date().toISOString()),
 });

@@ -101,6 +101,20 @@ body {
   margin-top: 5px;
 }
 
+/* Soft warm context banner at the top of the Sign Up modal (e.g. when the
+   flow was triggered from a Donate click). Not a validation warning. */
+.signup-intent-banner {
+  background: rgba(200, 133, 42, 0.12); /* soft tint of --gold */
+  color: var(--text-mid);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  text-align: left;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.signup-intent-banner strong { color: var(--brown); }
+
 .modal-search-wrap {
   position: relative;
   margin-bottom: 12px;

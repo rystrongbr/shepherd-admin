@@ -32,6 +32,9 @@ function lsGet(key) {
 function lsSet(key, value) {
   try { window.localStorage.setItem(key, value); } catch (_e) { /* storage blocked */ }
 }
+function lsRemove(key) {
+  try { window.localStorage.removeItem(key); } catch (_e) { /* storage blocked */ }
+}
 function ssGet(key) {
   try { return window.sessionStorage.getItem(key); } catch (_e) { return null; }
 }
@@ -144,6 +147,12 @@ let v2LastResponse  = null;  // shape: { answer, citations: [...], followUps: [.
 // We persist {id, email} in the URL hash (#?u=ID&e=EMAIL) because
 // localStorage is blocked in sandboxed iframes. URL hash survives reloads.
 let currentUser = null;
+// Why the Sign Up modal was opened. null | "donate". When "donate", we show a
+// context banner in the modal and auto-open the donation modal after sign-in.
+// Mirrored to localStorage (SIGNUP_RETURN_INTENT_KEY) so it survives the
+// magic-link email round-trip (which lands on a fresh page load).
+let signupReturnIntent = null;
+const SIGNUP_RETURN_INTENT_KEY = "signup_return_intent";
 // Most recently saved server-side chat row id (returned by POST /api/chats).
 // Reactions attach to this id. Reset when a chat starts.
 let currentChatId = null;
@@ -1321,6 +1330,7 @@ async function initAuth() {
           identifyUser(currentUser);
           track("signup_or_login", { method: "magic_link", user_id: currentUser.id });
           setTimeout(() => showInlineToast(`Signed in as ${currentUser.email}`), 600);
+          resolveSignupReturnIntent();
           return;
         }
       }
@@ -1359,6 +1369,20 @@ async function initAuth() {
   } else if (params.donation === "cancel") {
     setHashParam("donation", null);
   }
+}
+
+// After a Donate-triggered Sign Up completes, resume the donation flow.
+// The intent may live in memory (same-tab) or localStorage (magic-link email
+// round-trip lands on a fresh page load). Consume it so it fires only once.
+function resolveSignupReturnIntent() {
+  if (!currentUser || !currentUser.id) return;
+  const intent = signupReturnIntent || lsGet(SIGNUP_RETURN_INTENT_KEY);
+  if (intent !== "donate") return;
+  signupReturnIntent = null;
+  lsRemove(SIGNUP_RETURN_INTENT_KEY);
+  track("signup_intent_resolved", { intent: "donate" });
+  // Small delay so the "Signed in as…" toast and signed-in UI settle first.
+  setTimeout(() => showDonationModal("post_signup_donate_intent"), 800);
 }
 
 function showSignedInUI() {
@@ -1415,8 +1439,14 @@ function setAuthMode(mode) {
   const toggleText = document.getElementById("login-modal-mode-toggle-text");
   const toggleLink = document.getElementById("login-modal-mode-toggle-link");
   const homeChurchWrap = document.getElementById("signup-home-church-modal-wrap");
-  // Home church capture (input + helper copy) only appears when creating an account.
-  if (homeChurchWrap) homeChurchWrap.style.display = currentAuthMode === "signup" ? "" : "none";
+  const zipWrap = document.getElementById("signup-zip-modal-wrap");
+  const intentBanner = document.getElementById("signup-intent-banner");
+  const isSignup = currentAuthMode === "signup";
+  // ZIP + home church capture (input + helper copy) only appear when creating an account.
+  if (zipWrap) zipWrap.style.display = isSignup ? "" : "none";
+  if (homeChurchWrap) homeChurchWrap.style.display = isSignup ? "" : "none";
+  // Donate-intent banner: only in Sign Up mode, and only when that intent is set.
+  if (intentBanner) intentBanner.style.display = (isSignup && signupReturnIntent === "donate") ? "block" : "none";
   if (currentAuthMode === "signup") {
     if (title) title.textContent = "Create your My Shepherd account";
     if (subtitle) subtitle.textContent = "Save your scripture history and pick up where you left off on any device.";
@@ -1479,24 +1509,49 @@ function closeLoginModal() {
   if (modal) modal.style.display = "none";
 }
 
+// Explicit cancel (user clicks "Continue without signing in"). Abandons any
+// pending return-intent so we don't auto-open the donation modal later.
+// NB: plain closeLoginModal() preserves the intent — sending the magic link
+// closes the form but the intent must survive the email round-trip.
+function cancelSignupFlow() {
+  signupReturnIntent = null;
+  lsRemove(SIGNUP_RETURN_INTENT_KEY);
+  closeLoginModal();
+}
+
 async function handleSendMagicLink() {
   const input = document.getElementById("magic-email-input");
   const btn = document.getElementById("btn-send-magic-link");
+  const errEl = document.getElementById("signup-modal-error");
+  const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.style.display = "block"; } };
+  if (errEl) errEl.style.display = "none";
   const email = (input?.value || "").trim().toLowerCase();
   if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
     input?.focus();
     return;
   }
-  btn.disabled = true;
-  const originalText = btn.textContent;
-  btn.textContent = "Sending…";
+
   const body = { email };
-  // Only carry home church through the Sign Up flow; persisted on user creation.
+  // Only carry ZIP + home church through the Sign Up flow; persisted on user creation.
   if (currentAuthMode === "signup") {
+    const zipEl = document.getElementById("signup-zip-modal-input");
+    const zip = (zipEl?.value || "").trim();
+    // ZIP is optional, but if the user typed something it must be 5 digits
+    // (same regex/UX as the stay-connected modal).
+    if (zip && !ZIP_RE.test(zip)) {
+      showErr("Please enter a 5-digit ZIP code, or leave it blank.");
+      zipEl?.focus();
+      return;
+    }
+    if (zip) body.zipCode = zip;
     const churchEl = document.getElementById("signup-home-church-modal-input");
     const homeChurch = (churchEl?.value || "").trim().slice(0, 200);
     if (homeChurch) body.homeChurchName = homeChurch;
   }
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = "Sending…";
   try {
     const res = await fetch(`${API_BASE}/api/user/magic-link`, {
       method: "POST",
@@ -1968,7 +2023,7 @@ function init() {
     });
   }
   const skipLoginBtn = document.getElementById("btn-skip-login");
-  if (skipLoginBtn) skipLoginBtn.addEventListener("click", closeLoginModal);
+  if (skipLoginBtn) skipLoginBtn.addEventListener("click", cancelSignupFlow);
   const signInHeaderBtn = document.getElementById("btn-sign-in-header");
   if (signInHeaderBtn) signInHeaderBtn.addEventListener("click", openLoginModal);
   const signUpHeaderBtn = document.getElementById("btn-sign-up-header");
@@ -2023,6 +2078,10 @@ function init() {
 function onDonateHeaderClick() {
   track("donate_button_clicked", { source: "header_button" });
   if (!currentUser || !currentUser.id) {
+    // Remember the user wanted to donate so we can resume after sign-up,
+    // including across the magic-link email round-trip (localStorage).
+    signupReturnIntent = "donate";
+    lsSet(SIGNUP_RETURN_INTENT_KEY, "donate");
     openSignupFlow();
     return;
   }
