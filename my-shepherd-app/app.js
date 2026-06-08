@@ -1414,9 +1414,9 @@ function setAuthMode(mode) {
   const sendBtn = document.getElementById("btn-send-magic-link");
   const toggleText = document.getElementById("login-modal-mode-toggle-text");
   const toggleLink = document.getElementById("login-modal-mode-toggle-link");
-  const homeChurchInput = document.getElementById("signup-home-church-modal-input");
-  // Home church capture only appears when creating an account.
-  if (homeChurchInput) homeChurchInput.style.display = currentAuthMode === "signup" ? "" : "none";
+  const homeChurchWrap = document.getElementById("signup-home-church-modal-wrap");
+  // Home church capture (input + helper copy) only appears when creating an account.
+  if (homeChurchWrap) homeChurchWrap.style.display = currentAuthMode === "signup" ? "" : "none";
   if (currentAuthMode === "signup") {
     if (title) title.textContent = "Create your My Shepherd account";
     if (subtitle) subtitle.textContent = "Save your scripture history and pick up where you left off on any device.";

@@ -48,7 +48,10 @@
       <div id="magic-link-form">
         <input id="magic-email-input" type="email" class="church-search-input" placeholder="Enter your email address" autocomplete="email" data-testid="input-magic-email" />
         <!-- Shown only in Sign Up mode (toggled by setAuthMode). -->
-        <input id="signup-home-church-modal-input" type="text" maxlength="200" class="church-search-input" placeholder="Home church (optional)" autocomplete="organization" style="margin-top:10px;display:none;" data-testid="input-signup-home-church-modal" />
+        <div id="signup-home-church-modal-wrap" style="display:none;">
+          <input id="signup-home-church-modal-input" type="text" maxlength="200" class="church-search-input" placeholder="Home church (optional)" autocomplete="organization" style="margin-top:10px;" data-testid="input-signup-home-church-modal" />
+          <p class="field-hint">We'll prioritize bringing My Shepherd to your church and let you know when they're on board.</p>
+        </div>
         <button id="btn-send-magic-link" class="btn-primary" style="margin-top:10px;" data-testid="button-send-magic-link">
           Send Sign-In Link
         </button>
@@ -89,6 +92,7 @@
           <input id="stay-connected-email" type="email" class="church-search-input" placeholder="Your email address" autocomplete="email" data-testid="input-stay-connected-email" />
           <input id="stay-connected-zip" type="text" inputmode="numeric" maxlength="5" class="church-search-input" placeholder="ZIP code" autocomplete="postal-code" style="margin-top:10px;" data-testid="input-stay-connected-zip" />
           <input id="signup-home-church-input" type="text" maxlength="200" class="church-search-input" placeholder="Home church (optional)" autocomplete="organization" style="margin-top:10px;" data-testid="input-signup-home-church" />
+          <p class="field-hint">We'll let your church know you're a fan when they join My Shepherd.</p>
           <div id="stay-connected-error" class="location-status" style="display:none;color:#B23A2E;margin-top:6px;"></div>
         </div>
         <div class="modal-actions">

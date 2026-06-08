@@ -93,6 +93,14 @@ body {
   line-height: 1.5;
 }
 
+/* Muted helper microcopy below a form input (not a validation warning). */
+.field-hint {
+  font-size: 0.8rem;
+  color: var(--text-mid);
+  line-height: 1.4;
+  margin-top: 5px;
+}
+
 .modal-search-wrap {
   position: relative;
   margin-bottom: 12px;
