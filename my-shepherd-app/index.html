@@ -65,38 +65,68 @@
     </div>
   </div>
 
-  <!-- Church Affiliation Modal -->
+  <!-- First-Visit Modal — two states controlled by FEATURE_CHURCH_MATCHING in app.js:
+       State A (flag off): "Stay connected" email + ZIP lead-gen capture (launch default).
+       State B (flag on):  church search/affiliation (preserved for when churches join). -->
   <div id="affiliation-modal" class="modal-overlay" role="dialog" aria-modal="true" style="display:none">
     <div class="modal-card">
-      <div class="modal-header">
-        <svg width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
-          <rect x="16" y="2" width="4" height="8" rx="1" fill="#7B4A1E"/>
-          <rect x="4" y="10" width="28" height="24" rx="2" fill="#7B4A1E" opacity="0.15"/>
-          <rect x="4" y="10" width="28" height="24" rx="2" stroke="#7B4A1E" stroke-width="2"/>
-          <rect x="14" y="22" width="8" height="12" rx="1" fill="#7B4A1E" opacity="0.6"/>
-          <rect x="8" y="16" width="6" height="6" rx="0.5" fill="#7B4A1E" opacity="0.5"/>
-          <rect x="22" y="16" width="6" height="6" rx="0.5" fill="#7B4A1E" opacity="0.5"/>
-        </svg>
-        <h2 class="modal-title">Which church do you attend?</h2>
-        <p class="modal-subtitle">Connecting to your church lets your pastor see what topics matter most to your congregation.</p>
+
+      <!-- ── State A: Stay connected (email + ZIP) ───────────────────────── -->
+      <div id="first-visit-stay-connected" style="display:none">
+        <button id="btn-close-stay-connected" class="modal-close-x" aria-label="Close" data-testid="button-close-stay-connected">&times;</button>
+        <div class="modal-header">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+            <rect x="4" y="9" width="28" height="20" rx="2" fill="#7B4A1E" opacity="0.12"/>
+            <rect x="4" y="9" width="28" height="20" rx="2" stroke="#7B4A1E" stroke-width="2"/>
+            <path d="M5 11 L18 21 L31 11" stroke="#7B4A1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </svg>
+          <h2 class="modal-title">Stay connected</h2>
+          <p class="modal-subtitle">We're connecting churches to My Shepherd soon. Drop your email and ZIP and we'll match you with your church when one near you joins.</p>
+        </div>
+        <div class="modal-search-wrap">
+          <input id="stay-connected-email" type="email" class="church-search-input" placeholder="Your email address" autocomplete="email" data-testid="input-stay-connected-email" />
+          <input id="stay-connected-zip" type="text" inputmode="numeric" maxlength="5" class="church-search-input" placeholder="ZIP code" autocomplete="postal-code" style="margin-top:10px;" data-testid="input-stay-connected-zip" />
+          <div id="stay-connected-error" class="location-status" style="display:none;color:#B23A2E;margin-top:6px;"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-stay-connected-submit" class="btn-primary" data-testid="button-stay-connected-submit">Save my spot</button>
+          <button id="btn-stay-connected-notnow" class="btn-ghost" data-testid="button-stay-connected-notnow">Not now</button>
+        </div>
       </div>
-      <div class="modal-search-wrap">
-        <input id="church-search-input" type="text" class="church-search-input" placeholder="Search by church name or city…" autocomplete="off" data-testid="input-church-search" />
-        <div id="church-search-results" class="church-results" style="display:none"></div>
+
+      <!-- ── State B: Church affiliation (preserved — FEATURE_CHURCH_MATCHING) ─ -->
+      <div id="first-visit-church-matching" style="display:none">
+        <div class="modal-header">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+            <rect x="16" y="2" width="4" height="8" rx="1" fill="#7B4A1E"/>
+            <rect x="4" y="10" width="28" height="24" rx="2" fill="#7B4A1E" opacity="0.15"/>
+            <rect x="4" y="10" width="28" height="24" rx="2" stroke="#7B4A1E" stroke-width="2"/>
+            <rect x="14" y="22" width="8" height="12" rx="1" fill="#7B4A1E" opacity="0.6"/>
+            <rect x="8" y="16" width="6" height="6" rx="0.5" fill="#7B4A1E" opacity="0.5"/>
+            <rect x="22" y="16" width="6" height="6" rx="0.5" fill="#7B4A1E" opacity="0.5"/>
+          </svg>
+          <h2 class="modal-title">Which church do you attend?</h2>
+          <p class="modal-subtitle">Connecting to your church lets your pastor see what topics matter most to your congregation.</p>
+        </div>
+        <div class="modal-search-wrap">
+          <input id="church-search-input" type="text" class="church-search-input" placeholder="Search by church name or city…" autocomplete="off" data-testid="input-church-search" />
+          <div id="church-search-results" class="church-results" style="display:none"></div>
+        </div>
+        <div id="selected-church-badge" class="selected-church-badge" style="display:none"></div>
+        <div class="modal-location-row">
+          <button id="btn-find-near-me" class="btn-outline-sm" data-testid="button-find-near-me">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            Find churches near me
+          </button>
+          <span id="location-status" class="location-status"></span>
+        </div>
+        <div id="nearby-churches-list" class="nearby-list" style="display:none"></div>
+        <div class="modal-actions">
+          <button id="btn-confirm-affiliation" class="btn-primary" disabled data-testid="button-confirm-affiliation">Connect to My Church</button>
+          <button id="btn-skip-affiliation" class="btn-ghost" data-testid="button-skip-affiliation">I'll do this later</button>
+        </div>
       </div>
-      <div id="selected-church-badge" class="selected-church-badge" style="display:none"></div>
-      <div class="modal-location-row">
-        <button id="btn-find-near-me" class="btn-outline-sm" data-testid="button-find-near-me">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
-          Find churches near me
-        </button>
-        <span id="location-status" class="location-status"></span>
-      </div>
-      <div id="nearby-churches-list" class="nearby-list" style="display:none"></div>
-      <div class="modal-actions">
-        <button id="btn-confirm-affiliation" class="btn-primary" disabled data-testid="button-confirm-affiliation">Connect to My Church</button>
-        <button id="btn-skip-affiliation" class="btn-ghost" data-testid="button-skip-affiliation">I'll do this later</button>
-      </div>
+
     </div>
   </div>
 
@@ -116,6 +146,10 @@
         <div class="header-right">
           <div id="church-badge-header" class="church-badge-header" style="display:none"></div>
           <div id="user-menu-area">
+            <button id="btn-donate-header" class="btn-donate-header" data-testid="button-donate-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+              Donate
+            </button>
             <button id="btn-sign-up-header" class="btn-sign-up-header" data-testid="button-sign-up-header">Sign Up</button>
             <button id="btn-sign-in-header" class="btn-sign-in-header" data-testid="button-sign-in-header">Sign In</button>
             <div id="user-avatar-menu" class="user-avatar-menu" style="display:none">

@@ -5,7 +5,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   churches, members, campaigns, sequences, activities, insights, affiliations, appUsers, chats,
-  bibleTopicContent, sequenceEnrollments, emailEvents, donations,
+  bibleTopicContent, sequenceEnrollments, emailEvents, donations, memberSignups,
   type Church, type InsertChurch,
   type Member, type InsertMember,
   type Campaign, type InsertCampaign,
@@ -18,6 +18,7 @@ import {
   type BibleTopicContent, type InsertBibleTopicContent,
   type SequenceEnrollment, type InsertSequenceEnrollment,
   type EmailEvent, type InsertEmailEvent,
+  type MemberSignup, type InsertMemberSignup,
 } from "@shared/schema";
 
 // DB_PATH allows the database file to live on a persistent volume in production.
@@ -225,6 +226,20 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_donations_user ON donations (user_id);
   CREATE INDEX IF NOT EXISTS idx_donations_status ON donations (status, created_at);
+
+  -- ─── Member signups (app first-visit "stay connected" lead-gen) ─────────────
+  CREATE TABLE IF NOT EXISTS member_signups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    zip_code TEXT NOT NULL,
+    user_id INTEGER,
+    source TEXT NOT NULL DEFAULT 'app_first_visit_modal',
+    ip_address TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_member_signups_created ON member_signups (created_at);
 `);
 
 // ─── Additive column migrations (email module) ───────────────────────────────
@@ -501,6 +516,23 @@ export interface IStorage {
    * table. Returns counts. Safety-net job.
    */
   recomputeDonorFlags(): { updated: number; total: number };
+
+  // ─── Member signups (app first-visit lead-gen) ─────────────────────────
+  /**
+   * Upsert on email: if a row exists, update zipCode/userId/updatedAt and
+   * return it; otherwise insert. Returns the resulting row plus whether it
+   * already existed (so the route can report alreadyExisted).
+   */
+  createMemberSignup(input: {
+    email: string;
+    zipCode: string;
+    userId?: number | null;
+    source?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }): { row: MemberSignup; alreadyExisted: boolean };
+  getMemberSignupByEmail(email: string): MemberSignup | undefined;
+  countMemberSignups(): number;
 }
 
 export const storage: IStorage = {
@@ -842,5 +874,46 @@ export const storage: IStorage = {
       .limit(1)
       .get();
     return row?.occurredAt;
+  },
+
+  // ─── Member signups (app first-visit lead-gen) ────────────────────────
+  createMemberSignup: (input) => {
+    const email = input.email.toLowerCase().trim();
+    const existing = db.select().from(memberSignups).where(eq(memberSignups.email, email)).get();
+    if (existing) {
+      const row = db.update(memberSignups)
+        .set({
+          zipCode: input.zipCode,
+          // Only set userId if one is provided; never clobber a known userId with null.
+          userId: input.userId ?? existing.userId,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(memberSignups.id, existing.id))
+        .returning()
+        .get()!;
+      return { row, alreadyExisted: true };
+    }
+    const row = db.insert(memberSignups)
+      .values({
+        email,
+        zipCode: input.zipCode,
+        userId: input.userId ?? null,
+        source: input.source || "app_first_visit_modal",
+        ipAddress: input.ipAddress || "",
+        userAgent: input.userAgent || "",
+        createdAt: new Date().toISOString(),
+        updatedAt: "",
+      })
+      .returning()
+      .get();
+    return { row, alreadyExisted: false };
+  },
+
+  getMemberSignupByEmail: (email) =>
+    db.select().from(memberSignups).where(eq(memberSignups.email, email.toLowerCase().trim())).get(),
+
+  countMemberSignups: () => {
+    const row = db.select({ c: sql<number>`count(*)` }).from(memberSignups).get();
+    return Number(row?.c ?? 0);
   },
 };

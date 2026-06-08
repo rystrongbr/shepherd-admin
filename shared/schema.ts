@@ -304,3 +304,24 @@ export const donations = sqliteTable("donations", {
 export const insertDonationSchema = createInsertSchema(donations).omit({ id: true });
 export type InsertDonation = z.infer<typeof insertDonationSchema>;
 export type Donation = typeof donations.$inferSelect;
+
+// ─── Member signups ──────────────────────────────────────────────────────────
+// Lead-gen capture from the My Shepherd app's first-visit "stay connected"
+// modal. Collected while no churches have joined yet — used to match a visitor
+// to their church once one near them signs up. email is unique so re-submits
+// upsert (update zip/userId) rather than duplicate.
+export const memberSignups = sqliteTable("member_signups", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  zipCode: text("zip_code").notNull(),
+  userId: integer("user_id"), // nullable, loose FK to app_users.id (no enforcement)
+  source: text("source").notNull().default("app_first_visit_modal"),
+  ipAddress: text("ip_address").notNull().default(""),
+  userAgent: text("user_agent").notNull().default(""),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().default(""),
+});
+
+export const insertMemberSignupSchema = createInsertSchema(memberSignups).omit({ id: true });
+export type InsertMemberSignup = z.infer<typeof insertMemberSignupSchema>;
+export type MemberSignup = typeof memberSignups.$inferSelect;

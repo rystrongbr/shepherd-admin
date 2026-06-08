@@ -14,6 +14,34 @@ const API_BASE = (typeof window !== "undefined" && window.location && window.loc
   ? window.location.origin
   : "https://app.myshepherdapp.church";
 
+// ── Feature flags ──────────────────────────────────────────────────────────
+// Church matching (the original first-visit "which church do you attend?"
+// search/affiliation flow) is OFF for launch because no churches have signed
+// up yet. While off, the first-visit modal shows the "Stay connected" email +
+// ZIP capture instead. Flip to true to re-enable church matching once churches
+// join — all the church-search code below is preserved and only runs when true.
+const FEATURE_CHURCH_MATCHING = false;
+
+// ── localStorage helpers ────────────────────────────────────────────────────
+// Wrapped in try/catch: this app historically ran inside a sandboxed iframe
+// where storage was blocked. It now ships at app.myshepherdapp.church (a real
+// origin) where localStorage works, but the guards keep it safe either way.
+function lsGet(key) {
+  try { return window.localStorage.getItem(key); } catch (_e) { return null; }
+}
+function lsSet(key, value) {
+  try { window.localStorage.setItem(key, value); } catch (_e) { /* storage blocked */ }
+}
+function ssGet(key) {
+  try { return window.sessionStorage.getItem(key); } catch (_e) { return null; }
+}
+function ssSet(key, value) {
+  try { window.sessionStorage.setItem(key, value); } catch (_e) { /* storage blocked */ }
+}
+function ssRemove(key) {
+  try { window.sessionStorage.removeItem(key); } catch (_e) { /* storage blocked */ }
+}
+
 // ── AI version flag ────────────────────────────────────────────────────────
 // Stage A soft launch: Sonnet 4.5 question-led multi-citation is the default.
 // If the v2 endpoint errors, code falls back automatically to the legacy
@@ -453,6 +481,7 @@ async function goDeeperOnCurrent() {
       if (currentVerse) saveChatToHistory(currentTopic, deeperQuestion, currentVerse, data.answer);
       isLoading = false;
       renderActionButtons();
+      incrementPositive("go_deeper");
       return;
     } catch (err) {
       console.warn("v2 deeper failed, falling back to v1:", err.message);
@@ -468,6 +497,7 @@ async function goDeeperOnCurrent() {
     renderFollowUpChipsFromList(followUps);
     renderShareButton();
     saveChatToHistory(currentTopic, question, verse, reflection);
+    incrementPositive("go_deeper");
   } catch(err) {
     const fallback = getFallbackResponse(currentTopic);
     content.innerHTML = buildResponseHTML(currentTopic, question, fallback.verse, fallback.reflection);
@@ -564,6 +594,13 @@ async function onReactionClick(reaction) {
   }
   if (helpedBtn) helpedBtn.disabled = true;
   if (notForMeBtn) notForMeBtn.disabled = true;
+
+  // Count "This helped" toward the 3-positive-actions donation trigger. Done
+  // here (before the not-signed-in early return below) so the counter is
+  // accurate pre-auth too. The 30s reaction_helped timeout below remains a
+  // separate, independent trigger — both can fire; the donationModalShowing /
+  // sessionDonationOptedOut guards prevent a double-show.
+  if (reaction === "helped") incrementPositive("helped");
 
   // If not signed in, this is a great moment to ask for signup
   if (!currentUser || !currentUser.id) {
@@ -716,13 +753,102 @@ async function loadTrending() {
 let selectedChurch = null;
 let searchDebounce = null;
 
+// Open the first-visit modal in whichever state the feature flag selects.
+// State A (flag off): "Stay connected" email+ZIP. State B (flag on): church search.
 function openAffiliationModal() {
   const modal = document.getElementById("affiliation-modal");
+  const stayConnected = document.getElementById("first-visit-stay-connected");
+  const churchMatching = document.getElementById("first-visit-church-matching");
+  if (FEATURE_CHURCH_MATCHING) {
+    if (stayConnected) stayConnected.style.display = "none";
+    if (churchMatching) churchMatching.style.display = "";
+  } else {
+    if (churchMatching) churchMatching.style.display = "none";
+    if (stayConnected) stayConnected.style.display = "";
+    track("signup_modal_viewed", {});
+  }
   modal.style.display = "flex";
 }
 
 function closeAffiliationModal() {
   document.getElementById("affiliation-modal").style.display = "none";
+}
+
+// ── Stay-connected (email + ZIP) modal ──────────────────────────────────────
+const SIGNUP_COMPLETED_KEY = "signup_modal_completed";
+const SIGNUP_DISMISSED_KEY = "signup_modal_dismissed_until";
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ZIP_RE = /^\d{5}$/;
+
+// Whether the stay-connected modal should be shown this visit. Suppressed
+// permanently once completed, or temporarily until the dismissed-until time.
+function shouldShowStayConnectedModal() {
+  if (lsGet(SIGNUP_COMPLETED_KEY) === "1") return false;
+  const until = lsGet(SIGNUP_DISMISSED_KEY);
+  if (until) {
+    const t = Date.parse(until);
+    if (!isNaN(t) && Date.now() < t) return false;
+  }
+  return true;
+}
+
+function isoFromNow(ms) {
+  return new Date(Date.now() + ms).toISOString();
+}
+
+async function submitStayConnected() {
+  const emailEl = document.getElementById("stay-connected-email");
+  const zipEl = document.getElementById("stay-connected-zip");
+  const errEl = document.getElementById("stay-connected-error");
+  const submitBtn = document.getElementById("btn-stay-connected-submit");
+  const email = (emailEl?.value || "").trim();
+  const zip = (zipEl?.value || "").trim();
+
+  const showErr = (msg) => {
+    if (errEl) { errEl.textContent = msg; errEl.style.display = "block"; }
+  };
+
+  if (!EMAIL_RE.test(email)) return showErr("Please enter a valid email address.");
+  if (!ZIP_RE.test(zip)) return showErr("Please enter a 5-digit ZIP code.");
+  if (errEl) errEl.style.display = "none";
+
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Saving…"; }
+
+  try {
+    const body = { email, zip };
+    if (currentUser && currentUser.id) body.userId = currentUser.id;
+    const res = await fetch(`${API_BASE}/api/member-signups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    lsSet(SIGNUP_COMPLETED_KEY, "1");
+    track("signup_modal_submitted", { has_user: !!(currentUser && currentUser.id) });
+    closeAffiliationModal();
+    loadTrending();
+    setTimeout(() => showInlineToast("You're on the list — we'll be in touch when your church joins."), 300);
+  } catch (e) {
+    console.warn("member signup failed:", e?.message);
+    showErr("Something went wrong. Please try again.");
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Save my spot"; }
+  }
+}
+
+// "Not now" — suppress for 7 days.
+function dismissStayConnectedNotNow() {
+  lsSet(SIGNUP_DISMISSED_KEY, isoFromNow(7 * 24 * 60 * 60 * 1000));
+  track("signup_modal_dismissed_not_now", {});
+  closeAffiliationModal();
+  loadTrending();
+}
+
+// X close / outside click — suppress for 24 hours (shorter than "Not now").
+function dismissStayConnectedX() {
+  lsSet(SIGNUP_DISMISSED_KEY, isoFromNow(24 * 60 * 60 * 1000));
+  track("signup_modal_dismissed_x", {});
+  closeAffiliationModal();
+  loadTrending();
 }
 
 function setSelectedChurch(church) {
@@ -1064,6 +1190,7 @@ async function shareVerse() {
   if (navigator.share) {
     try {
       await navigator.share({ title, text });
+      incrementPositive("share");
       return;
     } catch (e) { /* fall through to clipboard */ }
   }
@@ -1071,6 +1198,7 @@ async function shareVerse() {
   // Fallback: copy to clipboard
   try {
     await navigator.clipboard.writeText(text);
+    incrementPositive("share");
     const btn = document.getElementById("btn-share-verse");
     if (btn) {
       const orig = btn.innerHTML;
@@ -1181,6 +1309,7 @@ async function initAuth() {
         const data = await res.json();
         if (data && data.user) {
           currentUser = data.user;
+          mergePositiveCountOnSignIn(currentUser.id);
           setHashParam("magic", null);
           setHashParam("u", String(currentUser.id));
           setHashParam("e", currentUser.email || "");
@@ -1205,6 +1334,7 @@ async function initAuth() {
         const user = await res.json();
         if (user && user.id) {
           currentUser = user;
+          mergePositiveCountOnSignIn(currentUser.id);
           showSignedInUI();
           identifyUser(currentUser);
           track("session_restored", { user_id: currentUser.id });
@@ -1377,6 +1507,64 @@ const DONATION_AMOUNTS = [
 ];
 const DONATION_MIN_CENTS = 100;
 const DONATION_MAX_CENTS = 50000;
+
+// ── Positive-action donation trigger ────────────────────────────────────────
+// Counts cumulative positive actions across {This helped, Go deeper, Share}.
+// Every 3rd action fires the donation prompt and resets the counter (re-fires
+// forever, no daily cap). Heart click is NOT counted — it's its own trigger.
+//
+// Scope: pre-auth uses sessionStorage (true session, clears on tab close);
+// post-auth uses localStorage keyed by userId so it survives reloads. On
+// sign-in we merge the session count into the user-keyed count.
+const POSITIVE_THRESHOLD = 3;
+const POSITIVE_SESSION_KEY = "positive_action_count";
+function positiveLocalKey(userId) { return `positive_action_count_${userId}`; }
+
+function getPositiveCount() {
+  if (currentUser && currentUser.id) {
+    return parseInt(lsGet(positiveLocalKey(currentUser.id)) || "0", 10) || 0;
+  }
+  return parseInt(ssGet(POSITIVE_SESSION_KEY) || "0", 10) || 0;
+}
+
+function setPositiveCount(n) {
+  if (currentUser && currentUser.id) {
+    lsSet(positiveLocalKey(currentUser.id), String(n));
+  } else {
+    ssSet(POSITIVE_SESSION_KEY, String(n));
+  }
+}
+
+function resetPositiveCount() {
+  setPositiveCount(0);
+}
+
+// +1, then fire + reset every Nth. `action` is for analytics only.
+function incrementPositive(action) {
+  const next = getPositiveCount() + 1;
+  track("positive_action_incremented", { action: action || "unknown", new_count: next });
+  if (next >= POSITIVE_THRESHOLD) {
+    resetPositiveCount();
+    // Route through maybeShowDonationPrompt so server eligibility + the
+    // session opt-out / already-showing guards are all respected.
+    maybeShowDonationPrompt("three_positive_actions");
+  } else {
+    setPositiveCount(next);
+  }
+}
+
+// On sign-in, fold any pre-auth session count into the user-keyed local count,
+// then clear the session count so it isn't double-counted.
+function mergePositiveCountOnSignIn(userId) {
+  if (!userId) return;
+  const sessionCount = parseInt(ssGet(POSITIVE_SESSION_KEY) || "0", 10) || 0;
+  if (sessionCount > 0) {
+    const key = positiveLocalKey(userId);
+    const userCount = parseInt(lsGet(key) || "0", 10) || 0;
+    lsSet(key, String(userCount + sessionCount));
+  }
+  ssRemove(POSITIVE_SESSION_KEY);
+}
 
 async function maybeShowDonationPrompt(trigger) {
   if (donationModalShowing) return;
@@ -1696,16 +1884,45 @@ function init() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
-  // Modal
-  document.getElementById("btn-confirm-affiliation").addEventListener("click", confirmAffiliation);
-  document.getElementById("btn-skip-affiliation").addEventListener("click", () => {
+  // ── First-visit modal: Stay-connected (State A) wiring ────────────────
+  const stayConnectedSubmit = document.getElementById("btn-stay-connected-submit");
+  if (stayConnectedSubmit) stayConnectedSubmit.addEventListener("click", submitStayConnected);
+  const stayConnectedNotNow = document.getElementById("btn-stay-connected-notnow");
+  if (stayConnectedNotNow) stayConnectedNotNow.addEventListener("click", dismissStayConnectedNotNow);
+  const stayConnectedClose = document.getElementById("btn-close-stay-connected");
+  if (stayConnectedClose) stayConnectedClose.addEventListener("click", dismissStayConnectedX);
+  const zipInput = document.getElementById("stay-connected-zip");
+  if (zipInput) {
+    // Numeric-only ZIP input.
+    zipInput.addEventListener("input", () => { zipInput.value = zipInput.value.replace(/\D/g, "").slice(0, 5); });
+  }
+  // Enter in either field submits.
+  const submitOnEnter = e => { if (e.key === "Enter") { e.preventDefault(); submitStayConnected(); } };
+  document.getElementById("stay-connected-email")?.addEventListener("keydown", submitOnEnter);
+  zipInput?.addEventListener("keydown", submitOnEnter);
+  // Outside-click on the overlay dismisses (X-equivalent, 24h) when in
+  // stay-connected mode. Church-matching mode keeps its own skip button.
+  const firstVisitOverlay = document.getElementById("affiliation-modal");
+  if (firstVisitOverlay) {
+    firstVisitOverlay.addEventListener("click", e => {
+      if (e.target !== firstVisitOverlay) return; // only the backdrop, not the card
+      if (FEATURE_CHURCH_MATCHING) return;
+      dismissStayConnectedX();
+    });
+  }
+
+  // ── First-visit modal: Church-matching (State B) wiring ───────────────
+  // Preserved for when FEATURE_CHURCH_MATCHING is flipped on. These elements
+  // exist in the DOM in both states (State B is just hidden), so wiring is safe.
+  document.getElementById("btn-confirm-affiliation")?.addEventListener("click", confirmAffiliation);
+  document.getElementById("btn-skip-affiliation")?.addEventListener("click", () => {
     closeAffiliationModal();
     loadTrending();
   });
-  document.getElementById("btn-find-near-me").addEventListener("click", findNearbyChurches);
+  document.getElementById("btn-find-near-me")?.addEventListener("click", findNearbyChurches);
 
   // Church search debounce
-  document.getElementById("church-search-input").addEventListener("input", e => {
+  document.getElementById("church-search-input")?.addEventListener("input", e => {
     clearTimeout(searchDebounce);
     const v = e.target.value.trim();
     if (!v) {
@@ -1719,7 +1936,8 @@ function init() {
   document.addEventListener("click", e => {
     const wrap = document.querySelector(".modal-search-wrap");
     if (wrap && !wrap.contains(e.target)) {
-      document.getElementById("church-search-results").style.display = "none";
+      const results = document.getElementById("church-search-results");
+      if (results) results.style.display = "none";
     }
   });
 
@@ -1741,6 +1959,8 @@ function init() {
   if (signInHeaderBtn) signInHeaderBtn.addEventListener("click", openLoginModal);
   const signUpHeaderBtn = document.getElementById("btn-sign-up-header");
   if (signUpHeaderBtn) signUpHeaderBtn.addEventListener("click", openSignupFlow);
+  const donateHeaderBtn = document.getElementById("btn-donate-header");
+  if (donateHeaderBtn) donateHeaderBtn.addEventListener("click", onDonateHeaderClick);
   const modeToggleLink = document.getElementById("login-modal-mode-toggle-link");
   if (modeToggleLink) {
     modeToggleLink.addEventListener("click", (e) => {
@@ -1781,6 +2001,20 @@ function init() {
   });
 }
 
+// Header "Donate" button click. This is an explicitly user-initiated donation,
+// so we skip the server eligibility check (maybeShowDonationPrompt) — that gate
+// is meant for AUTOMATIC prompts only. showDonationModal requires a signed-in
+// user (donations attach to a user), so if anonymous we open the auth modal
+// first; the user can donate after signing in.
+function onDonateHeaderClick() {
+  track("donate_button_clicked", { source: "header_button" });
+  if (!currentUser || !currentUser.id) {
+    openSignupFlow();
+    return;
+  }
+  showDonationModal("header_button");
+}
+
 // Add the donation heart icon to the header. Created in JS to keep the
 // diff against index.html minimal.
 function injectDonationHeart() {
@@ -1803,25 +2037,36 @@ function injectDonationHeart() {
 }
 
 async function restoreAffiliation() {
-  try {
-    const res = await fetch(`${API_BASE}/api/affiliations/${encodeURIComponent(SESSION_ID)}`);
-    if (res.ok) {
-      const aff = await res.json();
-      if (aff && aff.churchId) {
-        // Fetch church name
-        const cr = await fetch(`${API_BASE}/api/churches/${aff.churchId}`);
-        if (cr.ok) {
-          const church = await cr.json();
-          churchId   = church.id;
-          churchName = church.name;
-          showChurchBadgeHeader();
-          return; // skip modal
+  // Church-matching path (flag on): restore an existing affiliation from the
+  // backend and skip the modal if already affiliated.
+  if (FEATURE_CHURCH_MATCHING) {
+    try {
+      const res = await fetch(`${API_BASE}/api/affiliations/${encodeURIComponent(SESSION_ID)}`);
+      if (res.ok) {
+        const aff = await res.json();
+        if (aff && aff.churchId) {
+          // Fetch church name
+          const cr = await fetch(`${API_BASE}/api/churches/${aff.churchId}`);
+          if (cr.ok) {
+            const church = await cr.json();
+            churchId   = church.id;
+            churchName = church.name;
+            showChurchBadgeHeader();
+            return; // skip modal
+          }
         }
       }
-    }
-  } catch (e) {}
-  // No existing affiliation found — show modal after short delay
-  setTimeout(() => openAffiliationModal(), 800);
+    } catch (e) {}
+    // No existing affiliation found — show modal after short delay
+    setTimeout(() => openAffiliationModal(), 800);
+    return;
+  }
+
+  // Stay-connected path (flag off): show the email+ZIP modal unless the visitor
+  // has already completed it or dismissed it within the suppression window.
+  if (shouldShowStayConnectedModal()) {
+    setTimeout(() => openAffiliationModal(), 800);
+  }
 }
 
 document.addEventListener("DOMContentLoaded", init);
