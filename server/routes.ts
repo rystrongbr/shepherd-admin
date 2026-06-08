@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { getScriptureResponse, getDeeperResponse } from "./ai";
 import { ask as askV2, drillDown as drillDownV2, isV2Configured } from "./ai-v2";
 import { insertMemberSchema, insertCampaignSchema, insertSequenceSchema, insertChurchSchema, insertInsightSchema, insertAffiliationSchema } from "@shared/schema";
+import { z } from "zod";
 import {
   testConnection,
   syncMember,
@@ -76,6 +77,10 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (PUBLIC.some(p => req.path.startsWith(p))) return next();
   // Also allow GET /affiliations/:sessionId (for session restore)
   if (req.method === "GET" && req.path.match(/^\/affiliations\//)) return next();
+  // POST /member-signups is public (consumer-facing first-visit modal).
+  // GET /member-signups/count stays admin-only, so we match POST exactly
+  // rather than adding the prefix to the PUBLIC allowlist.
+  if (req.method === "POST" && req.path === "/member-signups") return next();
 
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "").trim();
@@ -137,11 +142,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "email is required" });
 
+    // Optional Sign Up fields. Trim + normalize; empty → null. Persisted on the
+    // user row at create/link time so they survive the magic-link round-trip.
+    const homeChurchName = (typeof req.body.homeChurchName === "string"
+      ? req.body.homeChurchName.trim().slice(0, 200) : "") || null;
+    // ZIP: optional, but if provided must be exactly 5 digits.
+    const rawZip = typeof req.body.zipCode === "string" ? req.body.zipCode.trim() : "";
+    if (rawZip && !/^\d{5}$/.test(rawZip)) {
+      return res.status(400).json({ error: "zipCode must be 5 digits" });
+    }
+    const zipCode = rawZip || null;
+
     // Generate a secure token
     const token = randomBytes(32).toString("hex");
     const expiry = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
 
-    storage.setMagicToken(email, token, expiry);
+    storage.setMagicToken(email, token, expiry, { homeChurchName, zipCode });
 
     // Build magic link URL
     const baseUrl = process.env.APP_URL || "https://app.myshepherdapp.church";
@@ -209,6 +225,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const { googleId, email, name } = req.body;
     if (!googleId || !email) return res.status(400).json({ error: "googleId and email are required" });
 
+    // Optional Sign Up fields. Trim + normalize; empty → null. Set only when
+    // creating a brand-new account so we never clobber an existing capture.
+    const homeChurchName = (typeof req.body.homeChurchName === "string"
+      ? req.body.homeChurchName.trim().slice(0, 200) : "") || null;
+    const rawZip = typeof req.body.zipCode === "string" ? req.body.zipCode.trim() : "";
+    if (rawZip && !/^\d{5}$/.test(rawZip)) {
+      return res.status(400).json({ error: "zipCode must be 5 digits" });
+    }
+    const zipCode = rawZip || null;
+
     let user = storage.getUserByGoogleId(googleId);
     if (!user) {
       user = storage.getUserByEmail(email);
@@ -218,7 +244,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       } else {
         // Create new account
         user = storage.createUser({
-          email, name: name || "", googleId,
+          email, name: name || "", googleId, homeChurchName, zipCode,
           createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString(),
         });
       }
@@ -1266,6 +1292,65 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const aff = storage.getAffiliation(req.params.sessionId);
     if (!aff) return res.status(404).json({ error: "Not found" });
     res.json(aff);
+  });
+
+  // ─── Member signups (app first-visit "stay connected" lead-gen) ───────────────
+
+  // Trim, cap at 200 chars, and treat empty as null so an empty submit never
+  // overwrites a previously-captured value downstream.
+  const normalizeHomeChurch = (v: unknown): string | null => {
+    const s = typeof v === "string" ? v.trim().slice(0, 200) : "";
+    return s || null;
+  };
+
+  const memberSignupBodySchema = z.object({
+    email: z.string().email(),
+    zip: z.string().regex(/^\d{5}$/, "zip must be 5 digits"),
+    userId: z.coerce.number().int().positive().optional(),
+    homeChurchName: z.string().optional(),
+  });
+
+  /**
+   * POST /api/member-signups
+   * Public — captures an email + ZIP from the first-visit modal so we can match
+   * the visitor to their church once one near them joins. Upserts on email.
+   * Body: { email, zip, userId? }
+   */
+  app.post("/api/member-signups", (req, res) => {
+    try {
+      const parsed = memberSignupBodySchema.safeParse({
+        email: req.body.email,
+        zip: req.body.zip,
+        userId: req.body.userId ?? undefined,
+        homeChurchName: req.body.homeChurchName ?? undefined,
+      });
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid email or ZIP", details: parsed.error.flatten() });
+      }
+      const fwd = req.headers["x-forwarded-for"];
+      const ipAddress = (Array.isArray(fwd) ? fwd[0] : (fwd || "").split(",")[0].trim()) || req.ip || "";
+      const userAgent = req.headers["user-agent"] || "";
+      const { alreadyExisted } = storage.createMemberSignup({
+        email: parsed.data.email,
+        zipCode: parsed.data.zip,
+        userId: parsed.data.userId ?? null,
+        homeChurchName: normalizeHomeChurch(parsed.data.homeChurchName),
+        ipAddress,
+        userAgent,
+      });
+      res.json({ ok: true, alreadyExisted });
+    } catch (err: any) {
+      console.error("Member signup error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/member-signups/count
+   * Admin (Bearer token) — launch-day signup pickup metric.
+   */
+  app.get("/api/member-signups/count", (_req, res) => {
+    res.json({ count: storage.countMemberSignups() });
   });
 
   return httpServer;

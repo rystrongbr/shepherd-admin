@@ -163,6 +163,12 @@ export const appUsers = sqliteTable("app_users", {
   magicToken: text("magic_token").default(""), // current pending magic link token
   magicExpiry: text("magic_expiry").default(""), // ISO expiry of magic token
   churchId: integer("church_id"),              // affiliated church (if any)
+  // Optional free-text home church name captured at Sign Up. Seeds the B2B
+  // church-partnership lead list. Nullable; never required.
+  homeChurchName: text("home_church_name"),
+  // Optional 5-digit ZIP captured at Sign Up (for users who skip the
+  // stay-connected modal). Nullable; never required.
+  zipCode: text("zip_code"),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
   lastLoginAt: text("last_login_at").notNull().default(new Date().toISOString()),
 });
@@ -304,3 +310,27 @@ export const donations = sqliteTable("donations", {
 export const insertDonationSchema = createInsertSchema(donations).omit({ id: true });
 export type InsertDonation = z.infer<typeof insertDonationSchema>;
 export type Donation = typeof donations.$inferSelect;
+
+// ─── Member signups ──────────────────────────────────────────────────────────
+// Lead-gen capture from the My Shepherd app's first-visit "stay connected"
+// modal. Collected while no churches have joined yet — used to match a visitor
+// to their church once one near them signs up. email is unique so re-submits
+// upsert (update zip/userId) rather than duplicate.
+export const memberSignups = sqliteTable("member_signups", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  zipCode: text("zip_code").notNull(),
+  userId: integer("user_id"), // nullable, loose FK to app_users.id (no enforcement)
+  // Optional free-text home church name. Nullable; an empty submit never
+  // overwrites a previously-captured non-null value (see createMemberSignup).
+  homeChurchName: text("home_church_name"),
+  source: text("source").notNull().default("app_first_visit_modal"),
+  ipAddress: text("ip_address").notNull().default(""),
+  userAgent: text("user_agent").notNull().default(""),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().default(""),
+});
+
+export const insertMemberSignupSchema = createInsertSchema(memberSignups).omit({ id: true });
+export type InsertMemberSignup = z.infer<typeof insertMemberSignupSchema>;
+export type MemberSignup = typeof memberSignups.$inferSelect;

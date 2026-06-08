@@ -5,7 +5,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   churches, members, campaigns, sequences, activities, insights, affiliations, appUsers, chats,
-  bibleTopicContent, sequenceEnrollments, emailEvents, donations,
+  bibleTopicContent, sequenceEnrollments, emailEvents, donations, memberSignups,
   type Church, type InsertChurch,
   type Member, type InsertMember,
   type Campaign, type InsertCampaign,
@@ -18,6 +18,7 @@ import {
   type BibleTopicContent, type InsertBibleTopicContent,
   type SequenceEnrollment, type InsertSequenceEnrollment,
   type EmailEvent, type InsertEmailEvent,
+  type MemberSignup, type InsertMemberSignup,
 } from "@shared/schema";
 
 // DB_PATH allows the database file to live on a persistent volume in production.
@@ -225,6 +226,21 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_donations_user ON donations (user_id);
   CREATE INDEX IF NOT EXISTS idx_donations_status ON donations (status, created_at);
+
+  -- ─── Member signups (app first-visit "stay connected" lead-gen) ─────────────
+  CREATE TABLE IF NOT EXISTS member_signups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    zip_code TEXT NOT NULL,
+    user_id INTEGER,
+    home_church_name TEXT,
+    source TEXT NOT NULL DEFAULT 'app_first_visit_modal',
+    ip_address TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_member_signups_created ON member_signups (created_at);
 `);
 
 // ─── Additive column migrations (email module) ───────────────────────────────
@@ -251,6 +267,13 @@ addColumnIfMissing("members",  "deactivated_at",           "TEXT NOT NULL DEFAUL
 addColumnIfMissing("members",  "deactivation_reason",      "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("members",  "is_donor",                 "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("members",  "donor_since",              "TEXT NOT NULL DEFAULT ''");
+// Home church name — nullable free-text B2B lead capture (webapp launch feedback).
+// member_signups also declares this in CREATE TABLE above; the ADD COLUMN here
+// upgrades dev/prod DBs that already created the table from an earlier build.
+addColumnIfMissing("app_users",      "home_church_name",   "TEXT");
+addColumnIfMissing("member_signups", "home_church_name",   "TEXT");
+// Optional ZIP captured at Sign Up (webapp launch feedback).
+addColumnIfMissing("app_users",      "zip_code",           "TEXT");
 
 // Seed demo data. Extracted into a function so the /api/demo/reset endpoint
 // can call it after wiping. Called at boot only when ALLOW_DEMO_SEED=true AND
@@ -436,7 +459,8 @@ export interface IStorage {
   getUserByGoogleId(googleId: string): AppUser | undefined;
   createUser(data: InsertAppUser): AppUser;
   updateUser(id: number, data: Partial<InsertAppUser>): AppUser | undefined;
-  setMagicToken(email: string, token: string, expiry: string): AppUser;
+  updateUserHomeChurchName(userId: number, homeChurchName: string | null): AppUser | undefined;
+  setMagicToken(email: string, token: string, expiry: string, profile?: { homeChurchName?: string | null; zipCode?: string | null }): AppUser;
   verifyMagicToken(token: string): AppUser | undefined;
 
   // Chats
@@ -501,6 +525,24 @@ export interface IStorage {
    * table. Returns counts. Safety-net job.
    */
   recomputeDonorFlags(): { updated: number; total: number };
+
+  // ─── Member signups (app first-visit lead-gen) ─────────────────────────
+  /**
+   * Upsert on email: if a row exists, update zipCode/userId/updatedAt and
+   * return it; otherwise insert. Returns the resulting row plus whether it
+   * already existed (so the route can report alreadyExisted).
+   */
+  createMemberSignup(input: {
+    email: string;
+    zipCode: string;
+    userId?: number | null;
+    homeChurchName?: string | null;
+    source?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }): { row: MemberSignup; alreadyExisted: boolean };
+  getMemberSignupByEmail(email: string): MemberSignup | undefined;
+  countMemberSignups(): number;
 }
 
 export const storage: IStorage = {
@@ -606,17 +648,28 @@ export const storage: IStorage = {
   createUser: (data) => db.insert(appUsers).values({ ...data, email: data.email.toLowerCase() }).returning().get(),
   updateUser: (id, data) => db.update(appUsers).set(data).where(eq(appUsers.id, id)).returning().get(),
 
-  setMagicToken: (email, token, expiry) => {
+  setMagicToken: (email, token, expiry, profile) => {
+    const homeChurchName = profile?.homeChurchName || null;
+    const zipCode = profile?.zipCode || null;
     const existing = db.select().from(appUsers).where(eq(appUsers.email, email.toLowerCase())).get();
     if (existing) {
-      return db.update(appUsers).set({ magicToken: token, magicExpiry: expiry })
+      const patch: Partial<InsertAppUser> = { magicToken: token, magicExpiry: expiry };
+      // Only set these on an existing user when a non-empty value is provided —
+      // never clobber a previously-captured value with null/empty.
+      if (homeChurchName) patch.homeChurchName = homeChurchName;
+      if (zipCode) patch.zipCode = zipCode;
+      return db.update(appUsers).set(patch)
         .where(eq(appUsers.email, email.toLowerCase())).returning().get()!;
     }
     return db.insert(appUsers).values({
       email: email.toLowerCase(), magicToken: token, magicExpiry: expiry,
+      homeChurchName, zipCode,
       createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString(),
     }).returning().get();
   },
+
+  updateUserHomeChurchName: (userId, homeChurchName) =>
+    db.update(appUsers).set({ homeChurchName }).where(eq(appUsers.id, userId)).returning().get(),
 
   verifyMagicToken: (token) => {
     const user = db.select().from(appUsers).where(eq(appUsers.magicToken, token)).get();
@@ -842,5 +895,51 @@ export const storage: IStorage = {
       .limit(1)
       .get();
     return row?.occurredAt;
+  },
+
+  // ─── Member signups (app first-visit lead-gen) ────────────────────────
+  createMemberSignup: (input) => {
+    const email = input.email.toLowerCase().trim();
+    const existing = db.select().from(memberSignups).where(eq(memberSignups.email, email)).get();
+    // Normalize home church: empty/whitespace → null so the "don't overwrite" rule below works.
+    const incomingChurch = (input.homeChurchName ?? "").trim() || null;
+    if (existing) {
+      const row = db.update(memberSignups)
+        .set({
+          zipCode: input.zipCode,
+          // Only set userId if one is provided; never clobber a known userId with null.
+          userId: input.userId ?? existing.userId,
+          // Only overwrite home church with a non-empty value; preserve earlier capture otherwise.
+          homeChurchName: incomingChurch ?? existing.homeChurchName,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(memberSignups.id, existing.id))
+        .returning()
+        .get()!;
+      return { row, alreadyExisted: true };
+    }
+    const row = db.insert(memberSignups)
+      .values({
+        email,
+        zipCode: input.zipCode,
+        userId: input.userId ?? null,
+        homeChurchName: incomingChurch,
+        source: input.source || "app_first_visit_modal",
+        ipAddress: input.ipAddress || "",
+        userAgent: input.userAgent || "",
+        createdAt: new Date().toISOString(),
+        updatedAt: "",
+      })
+      .returning()
+      .get();
+    return { row, alreadyExisted: false };
+  },
+
+  getMemberSignupByEmail: (email) =>
+    db.select().from(memberSignups).where(eq(memberSignups.email, email.toLowerCase().trim())).get(),
+
+  countMemberSignups: () => {
+    const row = db.select({ c: sql<number>`count(*)` }).from(memberSignups).get();
+    return Number(row?.c ?? 0);
   },
 };

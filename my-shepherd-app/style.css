@@ -5,6 +5,8 @@
   --brown:      #7B4A1E;
   --brown-dark: #5A3415;
   --brown-light:#A0673A;
+  --gold:       #C8852A;
+  --gold-dark:  #A86C1E;
   --cream:      #F5F0EB;
   --cream-deep: #EDE8E2;
   --cream-card: #FFFDF9;
@@ -47,6 +49,7 @@ body {
 @keyframes slideUp { from { transform: translateY(20px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
 
 .modal-card {
+  position: relative;
   background: var(--cream-card);
   border-radius: 20px;
   padding: 32px 28px 24px;
@@ -54,6 +57,22 @@ body {
   box-shadow: 0 20px 60px rgba(0,0,0,0.18);
   animation: slideUp 0.25s ease;
 }
+
+.modal-close-x {
+  position: absolute;
+  top: 12px; right: 14px;
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-light);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.modal-close-x:hover { background: var(--cream-deep); color: var(--text-mid); }
 
 .modal-header {
   text-align: center;
@@ -73,6 +92,28 @@ body {
   color: var(--text-mid);
   line-height: 1.5;
 }
+
+/* Muted helper microcopy below a form input (not a validation warning). */
+.field-hint {
+  font-size: 0.8rem;
+  color: var(--text-mid);
+  line-height: 1.4;
+  margin-top: 5px;
+}
+
+/* Soft warm context banner at the top of the Sign Up modal (e.g. when the
+   flow was triggered from a Donate click). Not a validation warning. */
+.signup-intent-banner {
+  background: rgba(200, 133, 42, 0.12); /* soft tint of --gold */
+  color: var(--text-mid);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  text-align: left;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.signup-intent-banner strong { color: var(--brown); }
 
 .modal-search-wrap {
   position: relative;
@@ -651,6 +692,29 @@ body {
   margin-right: 8px;
 }
 .btn-sign-up-header:hover { background: var(--brown); color: #fff; }
+
+/* Donate: warm-accent filled CTA — the most prominent action in the header.
+   Visually distinct from the brown auth buttons so it reads as a separate,
+   action-driving choice rather than another sign-in path. */
+.btn-donate-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--gold, #C8852A);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+  margin-right: 8px;
+}
+.btn-donate-header svg { flex-shrink: 0; }
+.btn-donate-header:hover { background: var(--gold-dark, #A86C1E); transform: translateY(-1px); }
+.btn-donate-header:active { transform: translateY(0); }
 
 .user-avatar-btn {
   width: 32px; height: 32px;
