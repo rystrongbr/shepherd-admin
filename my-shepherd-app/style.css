@@ -115,13 +115,14 @@ body {
 }
 .signup-intent-banner strong { color: var(--brown); }
 
-/* "Check your inbox" success state shown after a magic link is sent.
-   Replaces the form in-place (sibling, not nested). */
-.magic-link-sent {
+/* Shared in-modal success state (e.g. "Check your inbox" after a magic link,
+   "You're on the list" after stay-connected). Replaces the form in-place
+   (sibling, not nested). */
+.modal-success {
   text-align: center;
   padding: 8px 4px 4px;
 }
-.magic-sent-check {
+.modal-success-check {
   width: 56px;
   height: 56px;
   margin: 0 auto 14px;
@@ -132,19 +133,19 @@ body {
   align-items: center;
   justify-content: center;
 }
-.magic-sent-title {
+.modal-success-title {
   font-family: var(--font-serif);
   font-size: 1.25rem;
   color: var(--brown);
   margin: 0 0 6px;
 }
-.magic-sent-sub {
+.modal-success-sub {
   font-size: 0.9rem;
   color: var(--text-mid);
   line-height: 1.5;
   margin: 0 0 16px;
 }
-.magic-sent-sub strong { color: var(--text-dark); }
+.modal-success-sub strong { color: var(--text-dark); }
 .magic-sent-resend {
   font-size: 0.82rem;
   color: var(--text-light);

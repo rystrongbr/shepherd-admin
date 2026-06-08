@@ -67,12 +67,12 @@
 
       <!-- Success state — sibling of #magic-link-form (NOT nested), so hiding
            the form does not hide this. Shown by handleSendMagicLink(). -->
-      <div id="magic-link-sent" class="magic-link-sent" style="display:none;" role="status" data-testid="magic-link-sent">
-        <div class="magic-sent-check" aria-hidden="true">
+      <div id="magic-link-sent" class="modal-success" style="display:none;" role="status" data-testid="magic-link-sent">
+        <div class="modal-success-check" aria-hidden="true">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
-        <h2 class="magic-sent-title">Check your inbox</h2>
-        <p class="magic-sent-sub">Your sign-in link is on its way to <strong id="magic-sent-email">your email</strong>.</p>
+        <h2 class="modal-success-title">Check your inbox</h2>
+        <p class="modal-success-sub">Your sign-in link is on its way to <strong id="magic-sent-email">your email</strong>.</p>
         <p class="magic-sent-resend">
           Didn't receive it? Check spam, or
           <a href="#" id="btn-resend-magic-link" class="magic-sent-resend-link" data-testid="button-resend-magic-link">Send again</a>
@@ -120,6 +120,17 @@
           <button id="btn-stay-connected-submit" class="btn-primary" data-testid="button-stay-connected-submit">Save my spot</button>
           <button id="btn-stay-connected-notnow" class="btn-ghost" data-testid="button-stay-connected-notnow">Not now</button>
         </div>
+      </div>
+
+      <!-- State A success — sibling of #first-visit-stay-connected (NOT nested),
+           shown in-place by submitStayConnected() instead of a toast. -->
+      <div id="stay-connected-success" class="modal-success" style="display:none;" role="status" data-testid="stay-connected-success">
+        <div class="modal-success-check" aria-hidden="true">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <h2 class="modal-success-title">You're on the list</h2>
+        <p class="modal-success-sub">We'll email <strong id="stay-connected-success-email">your email</strong> when My Shepherd is live with a church near you.</p>
+        <button id="btn-stay-connected-close-success" class="btn-ghost" data-testid="button-stay-connected-close-success">Close</button>
       </div>
 
       <!-- ── State B: Church affiliation (preserved — FEATURE_CHURCH_MATCHING) ─ -->

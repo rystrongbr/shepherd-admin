@@ -773,6 +773,8 @@ function openAffiliationModal() {
     if (churchMatching) churchMatching.style.display = "";
   } else {
     if (churchMatching) churchMatching.style.display = "none";
+    const success = document.getElementById("stay-connected-success");
+    if (success) success.style.display = "none";
     if (stayConnected) stayConnected.style.display = "";
     track("signup_modal_viewed", {});
   }
@@ -838,14 +840,35 @@ async function submitStayConnected() {
     lsSet(SIGNUP_COMPLETED_KEY, "1");
     // Don't send the church name itself to analytics — privacy. Just whether one was given.
     track("signup_modal_submitted", { has_user: !!(currentUser && currentUser.id), has_home_church: !!homeChurch });
-    closeAffiliationModal();
     loadTrending();
-    setTimeout(() => showInlineToast("You're on the list — we'll be in touch when your church joins."), 300);
+    showStayConnectedSuccess(email);
   } catch (e) {
     console.warn("member signup failed:", e?.message);
     showErr("Something went wrong. Please try again.");
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Save my spot"; }
   }
+}
+
+// Swaps the stay-connected form out for an in-modal "You're on the list" panel.
+// Replaces the old toast, which silently no-op'd on first visit (the toast
+// target #response-card doesn't exist before the user asks a question).
+function showStayConnectedSuccess(email) {
+  const form = document.getElementById("first-visit-stay-connected");
+  if (form) form.style.display = "none";
+  const emailEl = document.getElementById("stay-connected-success-email");
+  if (emailEl) emailEl.textContent = email;
+  const panel = document.getElementById("stay-connected-success");
+  if (panel) panel.style.display = "";
+}
+
+// Close button on the success panel: hide the modal and restore the form so a
+// re-open (e.g. State B, or a future visit) starts clean.
+function closeStayConnectedSuccess() {
+  const panel = document.getElementById("stay-connected-success");
+  if (panel) panel.style.display = "none";
+  const form = document.getElementById("first-visit-stay-connected");
+  if (form) form.style.display = "";
+  closeAffiliationModal();
 }
 
 // "Not now" — suppress for 7 days.
@@ -2040,6 +2063,8 @@ function init() {
   if (stayConnectedNotNow) stayConnectedNotNow.addEventListener("click", dismissStayConnectedNotNow);
   const stayConnectedClose = document.getElementById("btn-close-stay-connected");
   if (stayConnectedClose) stayConnectedClose.addEventListener("click", dismissStayConnectedX);
+  const stayConnectedCloseSuccess = document.getElementById("btn-stay-connected-close-success");
+  if (stayConnectedCloseSuccess) stayConnectedCloseSuccess.addEventListener("click", closeStayConnectedSuccess);
   const zipInput = document.getElementById("stay-connected-zip");
   if (zipInput) {
     // Numeric-only ZIP input.
