@@ -129,7 +129,16 @@
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
         <h2 class="modal-success-title">You're on the list</h2>
-        <p class="modal-success-sub">We'll email <strong id="stay-connected-success-email">your email</strong> when My Shepherd is live with a church near you.</p>
+        <!-- Default copy: magic-link sign-in email was sent. -->
+        <p id="stay-connected-success-sent" class="modal-success-sub">We saved your spot and sent a sign-in link to <strong id="stay-connected-success-email">your email</strong>. Click the link to keep your chats synced across devices.</p>
+        <!-- Fallback copy: signup saved but the sign-in link couldn't be sent. -->
+        <p id="stay-connected-success-fallback" class="modal-success-sub" style="display:none;">You're on the list. We couldn't send a sign-in link right now — try Sign Up from the header.</p>
+        <!-- Resend (mirrors #btn-resend-magic-link); hidden in the fallback case. -->
+        <p id="stay-connected-resend" class="magic-sent-resend" style="display:none;">
+          Didn't receive it? Check spam, or
+          <a href="#" id="btn-resend-stay-connected" class="magic-sent-resend-link" data-testid="button-resend-stay-connected">Send again</a>
+          <span id="stay-connected-resend-countdown" class="magic-sent-countdown"></span>
+        </p>
         <button id="btn-stay-connected-close-success" class="btn-ghost" data-testid="button-stay-connected-close-success">Close</button>
       </div>
 

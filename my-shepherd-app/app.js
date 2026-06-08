@@ -841,7 +841,12 @@ async function submitStayConnected() {
     // Don't send the church name itself to analytics — privacy. Just whether one was given.
     track("signup_modal_submitted", { has_user: !!(currentUser && currentUser.id), has_home_church: !!homeChurch });
     loadTrending();
-    showStayConnectedSuccess(email);
+    // The signup is saved. Now also fire a magic-link sign-in email so this form
+    // double-purposes as account creation (same endpoint Sign Up uses, which
+    // persists the profile). If this part fails the signup still stands, so we
+    // show success with fallback copy rather than erroring the whole flow.
+    const magicSent = await sendStayConnectedMagicLink(email, homeChurch, zip);
+    showStayConnectedSuccess(email, magicSent);
   } catch (e) {
     console.warn("member signup failed:", e?.message);
     showErr("Something went wrong. Please try again.");
@@ -849,14 +854,53 @@ async function submitStayConnected() {
   }
 }
 
+// Fires the magic-link sign-in email for the stay-connected flow. Returns true
+// on success, false on any failure (caller falls back to "couldn't send" copy).
+// Separate from handleSendMagicLink (which reads the Sign Up modal's inputs).
+async function sendStayConnectedMagicLink(email, homeChurch, zip) {
+  try {
+    const body = { email };
+    if (homeChurch) body.homeChurchName = homeChurch;
+    if (zip) body.zipCode = zip;
+    const res = await fetch(`${API_BASE}/api/user/magic-link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    track("stay_connected_magic_link_sent", { has_home_church: !!homeChurch });
+    return true;
+  } catch (e) {
+    console.warn("stay-connected magic link failed:", e?.message);
+    return false;
+  }
+}
+
 // Swaps the stay-connected form out for an in-modal "You're on the list" panel.
 // Replaces the old toast, which silently no-op'd on first visit (the toast
 // target #response-card doesn't exist before the user asks a question).
-function showStayConnectedSuccess(email) {
+// `magicSent` toggles between the sign-in-link copy (with a "Send again" resend)
+// and the fallback copy shown when the magic-link email couldn't be sent.
+function showStayConnectedSuccess(email, magicSent) {
   const form = document.getElementById("first-visit-stay-connected");
   if (form) form.style.display = "none";
   const emailEl = document.getElementById("stay-connected-success-email");
   if (emailEl) emailEl.textContent = email;
+  const sentCopy = document.getElementById("stay-connected-success-sent");
+  const fallbackCopy = document.getElementById("stay-connected-success-fallback");
+  const resend = document.getElementById("stay-connected-resend");
+  if (magicSent) {
+    if (sentCopy) sentCopy.style.display = "";
+    if (fallbackCopy) fallbackCopy.style.display = "none";
+    if (resend) resend.style.display = "";
+    startStayConnectedResendCooldown();
+  } else {
+    // Couldn't send the sign-in link — keep success (signup is saved) but hide
+    // the resend affordance, since there's nothing to resend.
+    if (sentCopy) sentCopy.style.display = "none";
+    if (fallbackCopy) fallbackCopy.style.display = "";
+    if (resend) resend.style.display = "none";
+  }
   const panel = document.getElementById("stay-connected-success");
   if (panel) panel.style.display = "";
 }
@@ -864,11 +908,58 @@ function showStayConnectedSuccess(email) {
 // Close button on the success panel: hide the modal and restore the form so a
 // re-open (e.g. State B, or a future visit) starts clean.
 function closeStayConnectedSuccess() {
+  clearStayConnectedResendCooldown();
   const panel = document.getElementById("stay-connected-success");
   if (panel) panel.style.display = "none";
   const form = document.getElementById("first-visit-stay-connected");
   if (form) form.style.display = "";
   closeAffiliationModal();
+}
+
+// Resend cooldown for the stay-connected "Send again" link. Mirrors the magic-
+// link modal's startResendCooldown (commit 5af9a72) but targets its own ids and
+// timer, and re-fires ONLY the magic link (the member-signup is already saved).
+let stayConnectedResendTimer = null;
+
+function clearStayConnectedResendCooldown() {
+  if (stayConnectedResendTimer) { clearInterval(stayConnectedResendTimer); stayConnectedResendTimer = null; }
+}
+
+function startStayConnectedResendCooldown() {
+  const link = document.getElementById("btn-resend-stay-connected");
+  const counter = document.getElementById("stay-connected-resend-countdown");
+  clearStayConnectedResendCooldown();
+  let remaining = RESEND_COOLDOWN_SECONDS;
+  const render = () => {
+    if (remaining > 0) {
+      if (link) link.setAttribute("aria-disabled", "true");
+      if (counter) counter.textContent = `(send again in ${remaining}s)`;
+    } else {
+      clearStayConnectedResendCooldown();
+      if (link) link.removeAttribute("aria-disabled");
+      if (counter) counter.textContent = "";
+    }
+  };
+  render();
+  stayConnectedResendTimer = setInterval(() => { remaining -= 1; render(); }, 1000);
+}
+
+// "Send again" on the stay-connected success panel — re-fires only the magic
+// link (member-signup already saved) using the still-populated form inputs,
+// then restarts the cooldown.
+async function handleResendStayConnected(e) {
+  if (e) e.preventDefault();
+  const link = document.getElementById("btn-resend-stay-connected");
+  if (link && link.getAttribute("aria-disabled") === "true") return;
+  const emailEl = document.getElementById("stay-connected-email");
+  const zipEl = document.getElementById("stay-connected-zip");
+  const churchEl = document.getElementById("signup-home-church-input");
+  const email = (emailEl?.value || "").trim();
+  const zip = (zipEl?.value || "").trim();
+  const homeChurch = (churchEl?.value || "").trim().slice(0, 200);
+  if (!EMAIL_RE.test(email)) return;
+  await sendStayConnectedMagicLink(email, homeChurch, zip);
+  startStayConnectedResendCooldown();
 }
 
 // "Not now" — suppress for 7 days.
@@ -2065,6 +2156,8 @@ function init() {
   if (stayConnectedClose) stayConnectedClose.addEventListener("click", dismissStayConnectedX);
   const stayConnectedCloseSuccess = document.getElementById("btn-stay-connected-close-success");
   if (stayConnectedCloseSuccess) stayConnectedCloseSuccess.addEventListener("click", closeStayConnectedSuccess);
+  const stayConnectedResend = document.getElementById("btn-resend-stay-connected");
+  if (stayConnectedResend) stayConnectedResend.addEventListener("click", handleResendStayConnected);
   const zipInput = document.getElementById("stay-connected-zip");
   if (zipInput) {
     // Numeric-only ZIP input.
