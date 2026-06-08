@@ -63,9 +63,22 @@
         <button id="btn-send-magic-link" class="btn-primary" style="margin-top:10px;" data-testid="button-send-magic-link">
           Send Sign-In Link
         </button>
-        <div id="magic-link-sent" style="display:none;text-align:center;padding:12px;color:var(--brown);font-size:0.85rem;">
-          ✓ Check your email — a sign-in link is on its way!
+      </div>
+
+      <!-- Success state — sibling of #magic-link-form (NOT nested), so hiding
+           the form does not hide this. Shown by handleSendMagicLink(). -->
+      <div id="magic-link-sent" class="magic-link-sent" style="display:none;" role="status" data-testid="magic-link-sent">
+        <div class="magic-sent-check" aria-hidden="true">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
+        <h2 class="magic-sent-title">Check your inbox</h2>
+        <p class="magic-sent-sub">Your sign-in link is on its way to <strong id="magic-sent-email">your email</strong>.</p>
+        <p class="magic-sent-resend">
+          Didn't receive it? Check spam, or
+          <a href="#" id="btn-resend-magic-link" class="magic-sent-resend-link" data-testid="button-resend-magic-link">Send again</a>
+          <span id="magic-resend-countdown" class="magic-sent-countdown"></span>
+        </p>
+        <button id="btn-close-magic-sent" class="btn-ghost" data-testid="button-close-magic-sent">Close</button>
       </div>
 
       <!-- Toggle between Sign In <-> Sign Up modes -->

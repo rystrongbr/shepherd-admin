@@ -1431,7 +1431,15 @@ function signOut() {
 // Affects modal title, subtitle, button label, and toggle link copy.
 let currentAuthMode = "signin";
 
+// Once the magic link is sent we show the "Check your inbox" state. It is
+// sticky — mode toggling is suppressed until the user closes / reopens.
+let inSuccessState = false;
+const RESEND_COOLDOWN_SECONDS = 30;
+let resendTimer = null;
+
 function setAuthMode(mode) {
+  // The success state has no form to re-style; don't let a stray toggle reset it.
+  if (inSuccessState) return;
   currentAuthMode = mode === "signup" ? "signup" : "signin";
   const title = document.getElementById("login-modal-title");
   const subtitle = document.querySelector("#login-modal .modal-subtitle");
@@ -1490,21 +1498,39 @@ function openSignupModal(trigger) {
     }
   }
 
+  resetMagicLinkState();
+
+  modal.style.display = "flex";
+}
+
+// Resets the modal from the "Check your inbox" success state back to the form,
+// restoring the mode toggle + skip button and clearing any resend cooldown.
+function resetMagicLinkState() {
+  inSuccessState = false;
+  clearResendCooldown();
   const sentEl = document.getElementById("magic-link-sent");
   if (sentEl) sentEl.style.display = "none";
   const form = document.getElementById("magic-link-form");
   if (form) form.style.display = "";
+  const toggle = document.getElementById("login-modal-mode-toggle");
+  if (toggle) toggle.style.display = "";
+  const skip = document.getElementById("btn-skip-login");
+  if (skip) skip.style.display = "";
+  const errEl = document.getElementById("signup-modal-error");
+  if (errEl) errEl.style.display = "none";
   const sendBtn = document.getElementById("btn-send-magic-link");
   if (sendBtn) {
     sendBtn.disabled = false;
     // Respect the current auth mode so manual Sign-Up flow keeps its label.
     sendBtn.textContent = currentAuthMode === "signup" ? "Send Sign-Up Link" : "Send Sign-In Link";
   }
-
-  modal.style.display = "flex";
 }
 
 function closeLoginModal() {
+  clearResendCooldown();
+  // Clear the sticky flag so the next openLoginModal/openSignupFlow can set the
+  // auth mode (setAuthMode early-returns while inSuccessState is true).
+  inSuccessState = false;
   const modal = document.getElementById("login-modal");
   if (modal) modal.style.display = "none";
 }
@@ -1559,14 +1585,68 @@ async function handleSendMagicLink() {
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    document.getElementById("magic-link-form").style.display = "none";
-    document.getElementById("magic-link-sent").style.display = "";
+    btn.textContent = originalText;
+    btn.disabled = false;
+    showMagicLinkSent(email);
   } catch (e) {
     btn.textContent = originalText;
     btn.disabled = false;
     alert("Sorry, we couldn't send your sign-in link. Please try again.");
     console.warn("magic link request failed:", e?.message);
   }
+}
+
+// Swaps the form out for the "Check your inbox" success panel and starts the
+// resend cooldown. Sticky until the user clicks Close (or reopens the modal).
+function showMagicLinkSent(email) {
+  inSuccessState = true;
+  const form = document.getElementById("magic-link-form");
+  if (form) form.style.display = "none";
+  const toggle = document.getElementById("login-modal-mode-toggle");
+  if (toggle) toggle.style.display = "none";
+  const skip = document.getElementById("btn-skip-login");
+  if (skip) skip.style.display = "none";
+  const emailEl = document.getElementById("magic-sent-email");
+  if (emailEl) emailEl.textContent = email;
+  const sentEl = document.getElementById("magic-link-sent");
+  if (sentEl) sentEl.style.display = "";
+  startResendCooldown();
+}
+
+function clearResendCooldown() {
+  if (resendTimer) { clearInterval(resendTimer); resendTimer = null; }
+}
+
+// Disables "Send again" for RESEND_COOLDOWN_SECONDS, counting down each second,
+// then re-enables it as a clickable link.
+function startResendCooldown() {
+  const link = document.getElementById("btn-resend-magic-link");
+  const counter = document.getElementById("magic-resend-countdown");
+  clearResendCooldown();
+  let remaining = RESEND_COOLDOWN_SECONDS;
+  const render = () => {
+    if (remaining > 0) {
+      if (link) link.setAttribute("aria-disabled", "true");
+      if (counter) counter.textContent = `(send again in ${remaining}s)`;
+    } else {
+      clearResendCooldown();
+      if (link) link.removeAttribute("aria-disabled");
+      if (counter) counter.textContent = "";
+    }
+  };
+  render();
+  resendTimer = setInterval(() => { remaining -= 1; render(); }, 1000);
+}
+
+// "Send again" — re-fires the magic link for the same email (handleSendMagicLink
+// reads the still-populated email input) and restarts the cooldown.
+function handleResendMagicLink(e) {
+  if (e) e.preventDefault();
+  const link = document.getElementById("btn-resend-magic-link");
+  if (link && link.getAttribute("aria-disabled") === "true") return;
+  // The form is hidden but its inputs keep their values, so handleSendMagicLink
+  // re-reads the same email and re-enters showMagicLinkSent on success.
+  handleSendMagicLink();
 }
 
 const DONATION_AMOUNTS = [
@@ -2024,6 +2104,10 @@ function init() {
   }
   const skipLoginBtn = document.getElementById("btn-skip-login");
   if (skipLoginBtn) skipLoginBtn.addEventListener("click", cancelSignupFlow);
+  const resendLink = document.getElementById("btn-resend-magic-link");
+  if (resendLink) resendLink.addEventListener("click", handleResendMagicLink);
+  const closeSentBtn = document.getElementById("btn-close-magic-sent");
+  if (closeSentBtn) closeSentBtn.addEventListener("click", closeLoginModal);
   const signInHeaderBtn = document.getElementById("btn-sign-in-header");
   if (signInHeaderBtn) signInHeaderBtn.addEventListener("click", openLoginModal);
   const signUpHeaderBtn = document.getElementById("btn-sign-up-header");
