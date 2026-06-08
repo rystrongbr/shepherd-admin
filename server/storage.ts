@@ -233,6 +233,7 @@ sqlite.exec(`
     email TEXT NOT NULL UNIQUE,
     zip_code TEXT NOT NULL,
     user_id INTEGER,
+    home_church_name TEXT,
     source TEXT NOT NULL DEFAULT 'app_first_visit_modal',
     ip_address TEXT NOT NULL DEFAULT '',
     user_agent TEXT NOT NULL DEFAULT '',
@@ -266,6 +267,11 @@ addColumnIfMissing("members",  "deactivated_at",           "TEXT NOT NULL DEFAUL
 addColumnIfMissing("members",  "deactivation_reason",      "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("members",  "is_donor",                 "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("members",  "donor_since",              "TEXT NOT NULL DEFAULT ''");
+// Home church name — nullable free-text B2B lead capture (webapp launch feedback).
+// member_signups also declares this in CREATE TABLE above; the ADD COLUMN here
+// upgrades dev/prod DBs that already created the table from an earlier build.
+addColumnIfMissing("app_users",      "home_church_name",   "TEXT");
+addColumnIfMissing("member_signups", "home_church_name",   "TEXT");
 
 // Seed demo data. Extracted into a function so the /api/demo/reset endpoint
 // can call it after wiping. Called at boot only when ALLOW_DEMO_SEED=true AND
@@ -451,7 +457,8 @@ export interface IStorage {
   getUserByGoogleId(googleId: string): AppUser | undefined;
   createUser(data: InsertAppUser): AppUser;
   updateUser(id: number, data: Partial<InsertAppUser>): AppUser | undefined;
-  setMagicToken(email: string, token: string, expiry: string): AppUser;
+  updateUserHomeChurchName(userId: number, homeChurchName: string | null): AppUser | undefined;
+  setMagicToken(email: string, token: string, expiry: string, homeChurchName?: string | null): AppUser;
   verifyMagicToken(token: string): AppUser | undefined;
 
   // Chats
@@ -527,6 +534,7 @@ export interface IStorage {
     email: string;
     zipCode: string;
     userId?: number | null;
+    homeChurchName?: string | null;
     source?: string;
     ipAddress?: string;
     userAgent?: string;
@@ -638,17 +646,25 @@ export const storage: IStorage = {
   createUser: (data) => db.insert(appUsers).values({ ...data, email: data.email.toLowerCase() }).returning().get(),
   updateUser: (id, data) => db.update(appUsers).set(data).where(eq(appUsers.id, id)).returning().get(),
 
-  setMagicToken: (email, token, expiry) => {
+  setMagicToken: (email, token, expiry, homeChurchName) => {
     const existing = db.select().from(appUsers).where(eq(appUsers.email, email.toLowerCase())).get();
     if (existing) {
-      return db.update(appUsers).set({ magicToken: token, magicExpiry: expiry })
+      const patch: Partial<InsertAppUser> = { magicToken: token, magicExpiry: expiry };
+      // Only set home church on an existing user when a non-empty value is
+      // provided — never clobber a previously-captured name with null/empty.
+      if (homeChurchName) patch.homeChurchName = homeChurchName;
+      return db.update(appUsers).set(patch)
         .where(eq(appUsers.email, email.toLowerCase())).returning().get()!;
     }
     return db.insert(appUsers).values({
       email: email.toLowerCase(), magicToken: token, magicExpiry: expiry,
+      homeChurchName: homeChurchName || null,
       createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString(),
     }).returning().get();
   },
+
+  updateUserHomeChurchName: (userId, homeChurchName) =>
+    db.update(appUsers).set({ homeChurchName }).where(eq(appUsers.id, userId)).returning().get(),
 
   verifyMagicToken: (token) => {
     const user = db.select().from(appUsers).where(eq(appUsers.magicToken, token)).get();
@@ -880,12 +896,16 @@ export const storage: IStorage = {
   createMemberSignup: (input) => {
     const email = input.email.toLowerCase().trim();
     const existing = db.select().from(memberSignups).where(eq(memberSignups.email, email)).get();
+    // Normalize home church: empty/whitespace → null so the "don't overwrite" rule below works.
+    const incomingChurch = (input.homeChurchName ?? "").trim() || null;
     if (existing) {
       const row = db.update(memberSignups)
         .set({
           zipCode: input.zipCode,
           // Only set userId if one is provided; never clobber a known userId with null.
           userId: input.userId ?? existing.userId,
+          // Only overwrite home church with a non-empty value; preserve earlier capture otherwise.
+          homeChurchName: incomingChurch ?? existing.homeChurchName,
           updatedAt: new Date().toISOString(),
         })
         .where(eq(memberSignups.id, existing.id))
@@ -898,6 +918,7 @@ export const storage: IStorage = {
         email,
         zipCode: input.zipCode,
         userId: input.userId ?? null,
+        homeChurchName: incomingChurch,
         source: input.source || "app_first_visit_modal",
         ipAddress: input.ipAddress || "",
         userAgent: input.userAgent || "",

@@ -801,8 +801,10 @@ async function submitStayConnected() {
   const zipEl = document.getElementById("stay-connected-zip");
   const errEl = document.getElementById("stay-connected-error");
   const submitBtn = document.getElementById("btn-stay-connected-submit");
+  const churchEl = document.getElementById("signup-home-church-input");
   const email = (emailEl?.value || "").trim();
   const zip = (zipEl?.value || "").trim();
+  const homeChurch = (churchEl?.value || "").trim().slice(0, 200);
 
   const showErr = (msg) => {
     if (errEl) { errEl.textContent = msg; errEl.style.display = "block"; }
@@ -817,6 +819,7 @@ async function submitStayConnected() {
   try {
     const body = { email, zip };
     if (currentUser && currentUser.id) body.userId = currentUser.id;
+    if (homeChurch) body.homeChurchName = homeChurch;
     const res = await fetch(`${API_BASE}/api/member-signups`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -824,7 +827,8 @@ async function submitStayConnected() {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     lsSet(SIGNUP_COMPLETED_KEY, "1");
-    track("signup_modal_submitted", { has_user: !!(currentUser && currentUser.id) });
+    // Don't send the church name itself to analytics — privacy. Just whether one was given.
+    track("signup_modal_submitted", { has_user: !!(currentUser && currentUser.id), has_home_church: !!homeChurch });
     closeAffiliationModal();
     loadTrending();
     setTimeout(() => showInlineToast("You're on the list — we'll be in touch when your church joins."), 300);
@@ -1410,6 +1414,9 @@ function setAuthMode(mode) {
   const sendBtn = document.getElementById("btn-send-magic-link");
   const toggleText = document.getElementById("login-modal-mode-toggle-text");
   const toggleLink = document.getElementById("login-modal-mode-toggle-link");
+  const homeChurchInput = document.getElementById("signup-home-church-modal-input");
+  // Home church capture only appears when creating an account.
+  if (homeChurchInput) homeChurchInput.style.display = currentAuthMode === "signup" ? "" : "none";
   if (currentAuthMode === "signup") {
     if (title) title.textContent = "Create your My Shepherd account";
     if (subtitle) subtitle.textContent = "Save your scripture history and pick up where you left off on any device.";
@@ -1483,11 +1490,18 @@ async function handleSendMagicLink() {
   btn.disabled = true;
   const originalText = btn.textContent;
   btn.textContent = "Sending…";
+  const body = { email };
+  // Only carry home church through the Sign Up flow; persisted on user creation.
+  if (currentAuthMode === "signup") {
+    const churchEl = document.getElementById("signup-home-church-modal-input");
+    const homeChurch = (churchEl?.value || "").trim().slice(0, 200);
+    if (homeChurch) body.homeChurchName = homeChurch;
+  }
   try {
     const res = await fetch(`${API_BASE}/api/user/magic-link`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     document.getElementById("magic-link-form").style.display = "none";

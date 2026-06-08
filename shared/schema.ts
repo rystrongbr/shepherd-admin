@@ -163,6 +163,9 @@ export const appUsers = sqliteTable("app_users", {
   magicToken: text("magic_token").default(""), // current pending magic link token
   magicExpiry: text("magic_expiry").default(""), // ISO expiry of magic token
   churchId: integer("church_id"),              // affiliated church (if any)
+  // Optional free-text home church name captured at Sign Up. Seeds the B2B
+  // church-partnership lead list. Nullable; never required.
+  homeChurchName: text("home_church_name"),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
   lastLoginAt: text("last_login_at").notNull().default(new Date().toISOString()),
 });
@@ -315,6 +318,9 @@ export const memberSignups = sqliteTable("member_signups", {
   email: text("email").notNull().unique(),
   zipCode: text("zip_code").notNull(),
   userId: integer("user_id"), // nullable, loose FK to app_users.id (no enforcement)
+  // Optional free-text home church name. Nullable; an empty submit never
+  // overwrites a previously-captured non-null value (see createMemberSignup).
+  homeChurchName: text("home_church_name"),
   source: text("source").notNull().default("app_first_visit_modal"),
   ipAddress: text("ip_address").notNull().default(""),
   userAgent: text("user_agent").notNull().default(""),

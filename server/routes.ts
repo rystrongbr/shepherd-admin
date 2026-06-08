@@ -142,11 +142,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "email is required" });
 
+    // Optional home church (Sign Up mode). Trim + cap; empty → null. Persisted
+    // on the user row at create/link time so it survives the magic-link round-trip.
+    const homeChurchName = (typeof req.body.homeChurchName === "string"
+      ? req.body.homeChurchName.trim().slice(0, 200) : "") || null;
+
     // Generate a secure token
     const token = randomBytes(32).toString("hex");
     const expiry = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
 
-    storage.setMagicToken(email, token, expiry);
+    storage.setMagicToken(email, token, expiry, homeChurchName);
 
     // Build magic link URL
     const baseUrl = process.env.APP_URL || "https://app.myshepherdapp.church";
@@ -214,6 +219,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const { googleId, email, name } = req.body;
     if (!googleId || !email) return res.status(400).json({ error: "googleId and email are required" });
 
+    // Optional home church (Sign Up). Trim + cap; empty → null. Set only when
+    // creating a brand-new account so we never clobber an existing capture.
+    const homeChurchName = (typeof req.body.homeChurchName === "string"
+      ? req.body.homeChurchName.trim().slice(0, 200) : "") || null;
+
     let user = storage.getUserByGoogleId(googleId);
     if (!user) {
       user = storage.getUserByEmail(email);
@@ -223,7 +233,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       } else {
         // Create new account
         user = storage.createUser({
-          email, name: name || "", googleId,
+          email, name: name || "", googleId, homeChurchName,
           createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString(),
         });
       }
@@ -1275,10 +1285,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ─── Member signups (app first-visit "stay connected" lead-gen) ───────────────
 
+  // Trim, cap at 200 chars, and treat empty as null so an empty submit never
+  // overwrites a previously-captured value downstream.
+  const normalizeHomeChurch = (v: unknown): string | null => {
+    const s = typeof v === "string" ? v.trim().slice(0, 200) : "";
+    return s || null;
+  };
+
   const memberSignupBodySchema = z.object({
     email: z.string().email(),
     zip: z.string().regex(/^\d{5}$/, "zip must be 5 digits"),
     userId: z.coerce.number().int().positive().optional(),
+    homeChurchName: z.string().optional(),
   });
 
   /**
@@ -1293,6 +1311,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         email: req.body.email,
         zip: req.body.zip,
         userId: req.body.userId ?? undefined,
+        homeChurchName: req.body.homeChurchName ?? undefined,
       });
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid email or ZIP", details: parsed.error.flatten() });
@@ -1304,6 +1323,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         email: parsed.data.email,
         zipCode: parsed.data.zip,
         userId: parsed.data.userId ?? null,
+        homeChurchName: normalizeHomeChurch(parsed.data.homeChurchName),
         ipAddress,
         userAgent,
       });
