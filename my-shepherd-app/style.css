@@ -718,6 +718,17 @@ body {
   display: flex; align-items: center; gap: 10px;
 }
 
+/* Keep the header actions on a single right-aligned row in both auth states.
+   Without this the container defaults to display:block, so the block-level
+   .user-avatar-menu drops below the inline Donate button when signed in. The
+   gap replaces the per-button margin-right hacks below. */
+#user-menu-area {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .btn-sign-in-header {
   padding: 6px 14px;
   background: var(--brown);
@@ -743,7 +754,6 @@ body {
   font-family: var(--font-sans);
   cursor: pointer;
   transition: background 0.2s, color 0.2s;
-  margin-right: 8px;
 }
 .btn-sign-up-header:hover { background: var(--brown); color: #fff; }
 
@@ -754,7 +764,10 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
+  /* Match the 32px avatar height so the two sit cleanly inline when signed in;
+     vertical padding becomes 0 since height + align-items handle centering. */
+  height: 32px;
+  padding: 0 14px;
   background: var(--gold, #C8852A);
   color: #fff;
   border: none;
@@ -764,7 +777,6 @@ body {
   font-family: var(--font-sans);
   cursor: pointer;
   transition: background 0.2s, transform 0.15s;
-  margin-right: 8px;
 }
 .btn-donate-header svg { flex-shrink: 0; }
 .btn-donate-header:hover { background: var(--gold-dark, #A86C1E); transform: translateY(-1px); }
