@@ -773,6 +773,8 @@ function openAffiliationModal() {
     if (churchMatching) churchMatching.style.display = "";
   } else {
     if (churchMatching) churchMatching.style.display = "none";
+    const success = document.getElementById("stay-connected-success");
+    if (success) success.style.display = "none";
     if (stayConnected) stayConnected.style.display = "";
     track("signup_modal_viewed", {});
   }
@@ -838,14 +840,35 @@ async function submitStayConnected() {
     lsSet(SIGNUP_COMPLETED_KEY, "1");
     // Don't send the church name itself to analytics — privacy. Just whether one was given.
     track("signup_modal_submitted", { has_user: !!(currentUser && currentUser.id), has_home_church: !!homeChurch });
-    closeAffiliationModal();
     loadTrending();
-    setTimeout(() => showInlineToast("You're on the list — we'll be in touch when your church joins."), 300);
+    showStayConnectedSuccess(email);
   } catch (e) {
     console.warn("member signup failed:", e?.message);
     showErr("Something went wrong. Please try again.");
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Save my spot"; }
   }
+}
+
+// Swaps the stay-connected form out for an in-modal "You're on the list" panel.
+// Replaces the old toast, which silently no-op'd on first visit (the toast
+// target #response-card doesn't exist before the user asks a question).
+function showStayConnectedSuccess(email) {
+  const form = document.getElementById("first-visit-stay-connected");
+  if (form) form.style.display = "none";
+  const emailEl = document.getElementById("stay-connected-success-email");
+  if (emailEl) emailEl.textContent = email;
+  const panel = document.getElementById("stay-connected-success");
+  if (panel) panel.style.display = "";
+}
+
+// Close button on the success panel: hide the modal and restore the form so a
+// re-open (e.g. State B, or a future visit) starts clean.
+function closeStayConnectedSuccess() {
+  const panel = document.getElementById("stay-connected-success");
+  if (panel) panel.style.display = "none";
+  const form = document.getElementById("first-visit-stay-connected");
+  if (form) form.style.display = "";
+  closeAffiliationModal();
 }
 
 // "Not now" — suppress for 7 days.
@@ -1431,7 +1454,15 @@ function signOut() {
 // Affects modal title, subtitle, button label, and toggle link copy.
 let currentAuthMode = "signin";
 
+// Once the magic link is sent we show the "Check your inbox" state. It is
+// sticky — mode toggling is suppressed until the user closes / reopens.
+let inSuccessState = false;
+const RESEND_COOLDOWN_SECONDS = 30;
+let resendTimer = null;
+
 function setAuthMode(mode) {
+  // The success state has no form to re-style; don't let a stray toggle reset it.
+  if (inSuccessState) return;
   currentAuthMode = mode === "signup" ? "signup" : "signin";
   const title = document.getElementById("login-modal-title");
   const subtitle = document.querySelector("#login-modal .modal-subtitle");
@@ -1490,21 +1521,39 @@ function openSignupModal(trigger) {
     }
   }
 
+  resetMagicLinkState();
+
+  modal.style.display = "flex";
+}
+
+// Resets the modal from the "Check your inbox" success state back to the form,
+// restoring the mode toggle + skip button and clearing any resend cooldown.
+function resetMagicLinkState() {
+  inSuccessState = false;
+  clearResendCooldown();
   const sentEl = document.getElementById("magic-link-sent");
   if (sentEl) sentEl.style.display = "none";
   const form = document.getElementById("magic-link-form");
   if (form) form.style.display = "";
+  const toggle = document.getElementById("login-modal-mode-toggle");
+  if (toggle) toggle.style.display = "";
+  const skip = document.getElementById("btn-skip-login");
+  if (skip) skip.style.display = "";
+  const errEl = document.getElementById("signup-modal-error");
+  if (errEl) errEl.style.display = "none";
   const sendBtn = document.getElementById("btn-send-magic-link");
   if (sendBtn) {
     sendBtn.disabled = false;
     // Respect the current auth mode so manual Sign-Up flow keeps its label.
     sendBtn.textContent = currentAuthMode === "signup" ? "Send Sign-Up Link" : "Send Sign-In Link";
   }
-
-  modal.style.display = "flex";
 }
 
 function closeLoginModal() {
+  clearResendCooldown();
+  // Clear the sticky flag so the next openLoginModal/openSignupFlow can set the
+  // auth mode (setAuthMode early-returns while inSuccessState is true).
+  inSuccessState = false;
   const modal = document.getElementById("login-modal");
   if (modal) modal.style.display = "none";
 }
@@ -1559,14 +1608,68 @@ async function handleSendMagicLink() {
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    document.getElementById("magic-link-form").style.display = "none";
-    document.getElementById("magic-link-sent").style.display = "";
+    btn.textContent = originalText;
+    btn.disabled = false;
+    showMagicLinkSent(email);
   } catch (e) {
     btn.textContent = originalText;
     btn.disabled = false;
     alert("Sorry, we couldn't send your sign-in link. Please try again.");
     console.warn("magic link request failed:", e?.message);
   }
+}
+
+// Swaps the form out for the "Check your inbox" success panel and starts the
+// resend cooldown. Sticky until the user clicks Close (or reopens the modal).
+function showMagicLinkSent(email) {
+  inSuccessState = true;
+  const form = document.getElementById("magic-link-form");
+  if (form) form.style.display = "none";
+  const toggle = document.getElementById("login-modal-mode-toggle");
+  if (toggle) toggle.style.display = "none";
+  const skip = document.getElementById("btn-skip-login");
+  if (skip) skip.style.display = "none";
+  const emailEl = document.getElementById("magic-sent-email");
+  if (emailEl) emailEl.textContent = email;
+  const sentEl = document.getElementById("magic-link-sent");
+  if (sentEl) sentEl.style.display = "";
+  startResendCooldown();
+}
+
+function clearResendCooldown() {
+  if (resendTimer) { clearInterval(resendTimer); resendTimer = null; }
+}
+
+// Disables "Send again" for RESEND_COOLDOWN_SECONDS, counting down each second,
+// then re-enables it as a clickable link.
+function startResendCooldown() {
+  const link = document.getElementById("btn-resend-magic-link");
+  const counter = document.getElementById("magic-resend-countdown");
+  clearResendCooldown();
+  let remaining = RESEND_COOLDOWN_SECONDS;
+  const render = () => {
+    if (remaining > 0) {
+      if (link) link.setAttribute("aria-disabled", "true");
+      if (counter) counter.textContent = `(send again in ${remaining}s)`;
+    } else {
+      clearResendCooldown();
+      if (link) link.removeAttribute("aria-disabled");
+      if (counter) counter.textContent = "";
+    }
+  };
+  render();
+  resendTimer = setInterval(() => { remaining -= 1; render(); }, 1000);
+}
+
+// "Send again" — re-fires the magic link for the same email (handleSendMagicLink
+// reads the still-populated email input) and restarts the cooldown.
+function handleResendMagicLink(e) {
+  if (e) e.preventDefault();
+  const link = document.getElementById("btn-resend-magic-link");
+  if (link && link.getAttribute("aria-disabled") === "true") return;
+  // The form is hidden but its inputs keep their values, so handleSendMagicLink
+  // re-reads the same email and re-enters showMagicLinkSent on success.
+  handleSendMagicLink();
 }
 
 const DONATION_AMOUNTS = [
@@ -1960,6 +2063,8 @@ function init() {
   if (stayConnectedNotNow) stayConnectedNotNow.addEventListener("click", dismissStayConnectedNotNow);
   const stayConnectedClose = document.getElementById("btn-close-stay-connected");
   if (stayConnectedClose) stayConnectedClose.addEventListener("click", dismissStayConnectedX);
+  const stayConnectedCloseSuccess = document.getElementById("btn-stay-connected-close-success");
+  if (stayConnectedCloseSuccess) stayConnectedCloseSuccess.addEventListener("click", closeStayConnectedSuccess);
   const zipInput = document.getElementById("stay-connected-zip");
   if (zipInput) {
     // Numeric-only ZIP input.
@@ -2024,6 +2129,10 @@ function init() {
   }
   const skipLoginBtn = document.getElementById("btn-skip-login");
   if (skipLoginBtn) skipLoginBtn.addEventListener("click", cancelSignupFlow);
+  const resendLink = document.getElementById("btn-resend-magic-link");
+  if (resendLink) resendLink.addEventListener("click", handleResendMagicLink);
+  const closeSentBtn = document.getElementById("btn-close-magic-sent");
+  if (closeSentBtn) closeSentBtn.addEventListener("click", closeLoginModal);
   const signInHeaderBtn = document.getElementById("btn-sign-in-header");
   if (signInHeaderBtn) signInHeaderBtn.addEventListener("click", openLoginModal);
   const signUpHeaderBtn = document.getElementById("btn-sign-up-header");

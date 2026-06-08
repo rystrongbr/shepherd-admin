@@ -115,6 +115,60 @@ body {
 }
 .signup-intent-banner strong { color: var(--brown); }
 
+/* Shared in-modal success state (e.g. "Check your inbox" after a magic link,
+   "You're on the list" after stay-connected). Replaces the form in-place
+   (sibling, not nested). */
+.modal-success {
+  text-align: center;
+  padding: 8px 4px 4px;
+}
+.modal-success-check {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  background: rgba(200, 133, 42, 0.14); /* soft tint of --gold */
+  color: var(--gold-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-success-title {
+  font-family: var(--font-serif);
+  font-size: 1.25rem;
+  color: var(--brown);
+  margin: 0 0 6px;
+}
+.modal-success-sub {
+  font-size: 0.9rem;
+  color: var(--text-mid);
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+.modal-success-sub strong { color: var(--text-dark); }
+.magic-sent-resend {
+  font-size: 0.82rem;
+  color: var(--text-light);
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+.magic-sent-resend-link {
+  color: var(--brown);
+  font-weight: 600;
+  text-decoration: underline;
+}
+.magic-sent-resend-link[aria-disabled="true"] {
+  color: var(--text-light);
+  font-weight: 400;
+  text-decoration: none;
+  cursor: default;
+  pointer-events: none;
+}
+.magic-sent-countdown {
+  color: var(--text-light);
+  margin-left: 4px;
+}
+
 .modal-search-wrap {
   position: relative;
   margin-bottom: 12px;
