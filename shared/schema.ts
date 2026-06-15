@@ -200,6 +200,23 @@ export const insertChatSchema = createInsertSchema(chats).omit({ id: true });
 export type InsertChat = z.infer<typeof insertChatSchema>;
 export type Chat = typeof chats.$inferSelect;
 
+// Traffic Snapshots — one row per source/metric/recordedAt. Used by the
+// Overview "Marketing Site — Unique Visitors" tile. Founder pastes the
+// Cloudflare number in chat; agent POSTs a snapshot row here so the
+// dashboard always shows the latest value and the delta from the prior.
+export const trafficSnapshots = sqliteTable("traffic_snapshots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  source:     text("source").notNull(),       // e.g. "cloudflare"
+  metric:     text("metric").notNull(),       // e.g. "uniques_30d"
+  value:      integer("value").notNull(),     // raw count
+  recordedAt: text("recorded_at").notNull().default(new Date().toISOString()),
+  note:       text("note").notNull().default(""),
+});
+
+export const insertTrafficSnapshotSchema = createInsertSchema(trafficSnapshots).omit({ id: true });
+export type InsertTrafficSnapshot = z.infer<typeof insertTrafficSnapshotSchema>;
+export type TrafficSnapshot = typeof trafficSnapshots.$inferSelect;
+
 // ─── Email module tables ─────────────────────────────────────────────────────
 // These tables back the My Shepherd email product (server/email/).
 // They live in the shared schema for now but are owned by the email module —

@@ -5,7 +5,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   churches, members, campaigns, sequences, activities, insights, affiliations, appUsers, chats,
-  bibleTopicContent, sequenceEnrollments, emailEvents, donations, memberSignups,
+  bibleTopicContent, sequenceEnrollments, emailEvents, donations, memberSignups, trafficSnapshots,
   type Church, type InsertChurch,
   type Member, type InsertMember,
   type Campaign, type InsertCampaign,
@@ -19,6 +19,7 @@ import {
   type SequenceEnrollment, type InsertSequenceEnrollment,
   type EmailEvent, type InsertEmailEvent,
   type MemberSignup, type InsertMemberSignup,
+  type TrafficSnapshot, type InsertTrafficSnapshot,
 } from "@shared/schema";
 
 // DB_PATH allows the database file to live on a persistent volume in production.
@@ -244,6 +245,20 @@ sqlite.exec(`
     updated_at TEXT NOT NULL DEFAULT ''
   );
   CREATE INDEX IF NOT EXISTS idx_member_signups_created ON member_signups (created_at);
+
+  -- ─── Traffic snapshots (founder pastes Cloudflare uniques in chat; agent
+  -- POSTs each daily value here so the Overview "Marketing Site — Unique
+  -- Visitors" tile can show the latest number plus delta vs the prior). ────
+  CREATE TABLE IF NOT EXISTS traffic_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    value INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+    note TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_traffic_snapshots_lookup
+    ON traffic_snapshots (source, metric, recorded_at DESC);
 `);
 
 // ─── Additive column migrations (email module) ───────────────────────────────
@@ -283,6 +298,11 @@ addColumnIfMissing("app_users",      "zip_code",           "TEXT");
 addColumnIfMissing("insights",       "verse_ref",          "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("insights",       "verse_text",         "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("insights",       "reflection",         "TEXT NOT NULL DEFAULT ''");
+
+// Traffic snapshots — forward-safety in case the table was created by an
+// older boot before columns were added. CREATE TABLE above is the source of
+// truth on fresh DBs.
+addColumnIfMissing("traffic_snapshots", "note",             "TEXT NOT NULL DEFAULT ''");
 
 // Seed demo data. Extracted into a function so the /api/demo/reset endpoint
 // can call it after wiping. Called at boot only when ALLOW_DEMO_SEED=true AND
@@ -568,6 +588,14 @@ export interface IStorage {
   }): { row: MemberSignup; alreadyExisted: boolean };
   getMemberSignupByEmail(email: string): MemberSignup | undefined;
   countMemberSignups(): number;
+
+  // ─── Traffic snapshots ─────────────────────────────────────────────────
+  /** Insert one snapshot row (e.g. Cloudflare 30-day uniques). */
+  createTrafficSnapshot(data: InsertTrafficSnapshot): TrafficSnapshot;
+  /** Latest snapshot for a (source, metric) pair, or undefined if none. */
+  getLatestTrafficSnapshot(source: string, metric: string): TrafficSnapshot | undefined;
+  /** Recent history (newest first) for a (source, metric) pair. */
+  getTrafficHistory(source: string, metric: string, limit?: number): TrafficSnapshot[];
 }
 
 export const storage: IStorage = {
@@ -1040,4 +1068,22 @@ export const storage: IStorage = {
     const row = db.select({ c: sql<number>`count(*)` }).from(memberSignups).get();
     return Number(row?.c ?? 0);
   },
+
+  // ─── Traffic snapshots ──────────────────────────────────────────────────────────
+  createTrafficSnapshot: (data) =>
+    db.insert(trafficSnapshots).values(data).returning().get(),
+
+  getLatestTrafficSnapshot: (source, metric) =>
+    db.select().from(trafficSnapshots)
+      .where(and(eq(trafficSnapshots.source, source), eq(trafficSnapshots.metric, metric)))
+      .orderBy(desc(trafficSnapshots.recordedAt))
+      .limit(1)
+      .get(),
+
+  getTrafficHistory: (source, metric, limit = 30) =>
+    db.select().from(trafficSnapshots)
+      .where(and(eq(trafficSnapshots.source, source), eq(trafficSnapshots.metric, metric)))
+      .orderBy(desc(trafficSnapshots.recordedAt))
+      .limit(limit)
+      .all(),
 };
