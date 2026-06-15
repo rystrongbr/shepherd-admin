@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, and, desc, sql, gte, isNull, or } from "drizzle-orm";
+import { eq, and, desc, sql, gte, isNull, or, like } from "drizzle-orm";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -109,6 +109,9 @@ sqlite.exec(`
     question TEXT NOT NULL DEFAULT '',
     session_id TEXT NOT NULL DEFAULT '',
     location TEXT NOT NULL DEFAULT '',
+    verse_ref TEXT NOT NULL DEFAULT '',
+    verse_text TEXT NOT NULL DEFAULT '',
+    reflection TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -274,6 +277,12 @@ addColumnIfMissing("app_users",      "home_church_name",   "TEXT");
 addColumnIfMissing("member_signups", "home_church_name",   "TEXT");
 // Optional ZIP captured at Sign Up (webapp launch feedback).
 addColumnIfMissing("app_users",      "zip_code",           "TEXT");
+// Q&A admin dashboard — capture verse + reflection for ALL traffic (anon +
+// signed-in) so the /questions page can show the full response, not just the
+// signed-in chats table. See shared/schema.ts insights table.
+addColumnIfMissing("insights",       "verse_ref",          "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("insights",       "verse_text",         "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("insights",       "reflection",         "TEXT NOT NULL DEFAULT ''");
 
 // Seed demo data. Extracted into a function so the /api/demo/reset endpoint
 // can call it after wiping. Called at boot only when ALLOW_DEMO_SEED=true AND
@@ -410,6 +419,20 @@ if (process.env.ALLOW_DEMO_SEED === "true") {
   runDemoSeed();
 }
 
+// Options for the Q&A admin dashboard query. Designed so future Church Admin
+// access can scope to a single church_id without changing the call shape.
+export type QAAudience = "all" | "signed_in" | "anon";
+export interface QAQueryOpts {
+  churchId?: number;       // null/undefined = platform-wide (Admin only)
+  days?: number;           // 0 or undefined = all-time
+  topic?: string;          // category filter (insights.topic)
+  audience?: QAAudience;
+  search?: string;         // ILIKE across question, topic, verse_ref
+  questionsOnly?: boolean; // skip topic-tap-only rows
+  limit?: number;
+  offset?: number;
+}
+
 export interface IStorage {
   // Churches
   getChurches(): Church[];
@@ -448,6 +471,8 @@ export interface IStorage {
   getInsights(churchId?: number, limit?: number): Insight[];
   getTopTopics(churchId?: number, days?: number): { topic: string; count: number }[];
   getTrendingQuestions(churchId?: number, limit?: number): Insight[];
+  // Q&A admin dashboard — paged, filtered, searchable list + summary counts.
+  getQA(opts: QAQueryOpts): { rows: Insight[]; total: number; questionTotal: number; signedInTotal: number; anonTotal: number };
 
   // Affiliations
   createAffiliation(data: InsertAffiliation): Affiliation;
@@ -617,6 +642,79 @@ export const storage: IStorage = {
     return Object.entries(counts)
       .map(([topic, count]) => ({ topic, count }))
       .sort((a, b) => b.count - a.count);
+  },
+
+  getQA: (opts) => {
+    const conds: any[] = [];
+    if (opts.churchId !== undefined) conds.push(eq(insights.churchId, opts.churchId));
+    if (opts.days && opts.days > 0) {
+      const since = new Date(Date.now() - opts.days * 24 * 60 * 60 * 1000).toISOString();
+      conds.push(gte(insights.createdAt, since));
+    }
+    if (opts.topic) conds.push(eq(insights.topic, opts.topic));
+    if (opts.audience === "signed_in") conds.push(sql`${insights.sessionId} LIKE 'user-%'`);
+    else if (opts.audience === "anon")  conds.push(sql`(${insights.sessionId} NOT LIKE 'user-%' OR ${insights.sessionId} = '')`);
+    if (opts.questionsOnly) conds.push(sql`trim(${insights.question}) <> ''`);
+    if (opts.search) {
+      const s = `%${opts.search.replace(/[%_]/g, m => "\\" + m)}%`;
+      conds.push(or(like(insights.question, s), like(insights.topic, s), like(insights.verseRef, s)));
+    }
+    const whereExpr = conds.length ? and(...conds) : undefined;
+
+    // Page
+    const limit  = Math.min(Math.max(opts.limit  ?? 50, 1), 200);
+    const offset = Math.max(opts.offset ?? 0, 0);
+    const baseSelect = db.select().from(insights);
+    const rows = (whereExpr ? baseSelect.where(whereExpr) : baseSelect)
+      .orderBy(desc(insights.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .all();
+
+    // Totals (unpaged, same filters)
+    const totalRow = (whereExpr
+      ? db.select({ c: sql<number>`count(*)` }).from(insights).where(whereExpr)
+      : db.select({ c: sql<number>`count(*)` }).from(insights)
+    ).get();
+    const total = Number(totalRow?.c ?? 0);
+
+    // Sub-totals (respect topic/days/church/search filters but not audience/questionsOnly)
+    const subConds: any[] = [];
+    if (opts.churchId !== undefined) subConds.push(eq(insights.churchId, opts.churchId));
+    if (opts.days && opts.days > 0) {
+      const since = new Date(Date.now() - opts.days * 24 * 60 * 60 * 1000).toISOString();
+      subConds.push(gte(insights.createdAt, since));
+    }
+    if (opts.topic) subConds.push(eq(insights.topic, opts.topic));
+    if (opts.search) {
+      const s = `%${opts.search.replace(/[%_]/g, m => "\\" + m)}%`;
+      subConds.push(or(like(insights.question, s), like(insights.topic, s), like(insights.verseRef, s)));
+    }
+    const subWhere = subConds.length ? and(...subConds) : undefined;
+
+    const qBase = db.select({ c: sql<number>`count(*)` }).from(insights);
+    const questionTotalRow = (subWhere
+      ? qBase.where(and(subWhere, sql`trim(${insights.question}) <> ''`))
+      : qBase.where(sql`trim(${insights.question}) <> ''`)
+    ).get();
+    const sBase = db.select({ c: sql<number>`count(*)` }).from(insights);
+    const signedInTotalRow = (subWhere
+      ? sBase.where(and(subWhere, sql`${insights.sessionId} LIKE 'user-%'`))
+      : sBase.where(sql`${insights.sessionId} LIKE 'user-%'`)
+    ).get();
+    const aBase = db.select({ c: sql<number>`count(*)` }).from(insights);
+    const anonTotalRow = (subWhere
+      ? aBase.where(and(subWhere, sql`(${insights.sessionId} NOT LIKE 'user-%' OR ${insights.sessionId} = '')`))
+      : aBase.where(sql`(${insights.sessionId} NOT LIKE 'user-%' OR ${insights.sessionId} = '')`)
+    ).get();
+
+    return {
+      rows,
+      total,
+      questionTotal:  Number(questionTotalRow?.c  ?? 0),
+      signedInTotal:  Number(signedInTotalRow?.c  ?? 0),
+      anonTotal:      Number(anonTotalRow?.c      ?? 0),
+    };
   },
 
   getTrendingQuestions: (churchId, limit = 10) => {

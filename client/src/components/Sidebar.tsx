@@ -2,7 +2,7 @@ import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
-  LayoutDashboard, Users, Mail, GitBranch, Settings, ChevronRight, TrendingUp, UserMinus
+  LayoutDashboard, Users, Mail, GitBranch, Settings, ChevronRight, TrendingUp, UserMinus, MessageSquare
 } from "lucide-react";
 
 const navItems = [
@@ -11,6 +11,7 @@ const navItems = [
   { label: "Campaigns", icon: Mail,            path: "/campaigns" },
   { label: "Sequences", icon: GitBranch,       path: "/sequences" },
   { label: "Insights",  icon: TrendingUp,      path: "/insights" },
+  { label: "Questions", icon: MessageSquare,   path: "/questions" },
 ];
 
 interface DeactivationsSummaryResp {

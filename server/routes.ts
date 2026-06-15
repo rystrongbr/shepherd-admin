@@ -1206,11 +1206,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/insights/log", (req, res) => {
     try {
       const parsed = insertInsightSchema.safeParse({
-        topic:     req.body.topic,
-        question:  req.body.question  || "",
-        sessionId: req.body.sessionId || "",
-        churchId:  req.body.churchId  ?? null,
-        location:  req.body.location  || "",
+        topic:      req.body.topic,
+        question:   req.body.question   || "",
+        sessionId:  req.body.sessionId  || "",
+        churchId:   req.body.churchId   ?? null,
+        location:   req.body.location   || "",
+        verseRef:   req.body.verseRef   || "",
+        verseText:  req.body.verseText  || "",
+        reflection: req.body.reflection || "",
         createdAt: new Date().toISOString(),
       });
       if (!parsed.success) return res.status(400).json({ error: parsed.error });
@@ -1256,6 +1259,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const churchId = req.query.churchId ? Number(req.query.churchId) : undefined;
     const topTopics = storage.getTopTopics(churchId, 7);
     res.json({ trending: topTopics.slice(0, 5) });
+  });
+
+  /**
+   * GET /api/insights/qa
+   * Q&A admin dashboard — paged, filtered, searchable Q&A log.
+   *
+   * Access: Admin-only today; architected for Church Admin scoping via
+   * ?churchId=... once church accounts ship. Treat the absence of churchId
+   * as platform-wide and gate at the UI/auth layer.
+   *
+   * Query: ?churchId=&days=30&topic=Anxiety&audience=all|signed_in|anon
+   *        &search=&questionsOnly=1&limit=50&offset=0
+   */
+  app.get("/api/insights/qa", (req, res) => {
+    try {
+      const churchId  = req.query.churchId != null && req.query.churchId !== "" ? Number(req.query.churchId) : undefined;
+      const days      = req.query.days != null ? Number(req.query.days) : 30;
+      const topic     = (req.query.topic as string) || undefined;
+      const audience  = ((req.query.audience as string) || "all") as "all" | "signed_in" | "anon";
+      const search    = (req.query.search as string) || undefined;
+      const questionsOnly = req.query.questionsOnly === "1" || req.query.questionsOnly === "true";
+      const limit     = req.query.limit  != null ? Number(req.query.limit)  : 50;
+      const offset    = req.query.offset != null ? Number(req.query.offset) : 0;
+
+      const result = storage.getQA({
+        churchId, days, topic, audience, search, questionsOnly, limit, offset,
+      });
+      const topTopics = storage.getTopTopics(churchId, days);
+      res.json({ ...result, topTopics });
+    } catch (err: any) {
+      console.error("Insights QA error:", err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ─── Affiliations (link anonymous session to a church) ────────────────────────

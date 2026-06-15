@@ -128,10 +128,17 @@ export type Activity = typeof activities.$inferSelect;
 export const insights = sqliteTable("insights", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   churchId: integer("church_id"),          // null = unaffiliated
-  topic: text("topic").notNull(),           // e.g. "Anxiety"
+  topic: text("topic").notNull(),           // e.g. "Anxiety" — category used for the Q&A admin dashboard
   question: text("question").notNull().default(""), // free-form question text, if any
   sessionId: text("session_id").notNull().default(""), // anonymous browser session
   location: text("location").notNull().default(""),    // city/state from browser geolocation
+  // Response payload — captured for ALL traffic (anon + signed-in) so the
+  // admin Q&A dashboard can show the full Q+verse+reflection, not just the
+  // ~30% of signed-in chats. Defaults to empty for back-compat with logs
+  // written before this migration.
+  verseRef:   text("verse_ref").notNull().default(""),
+  verseText:  text("verse_text").notNull().default(""),
+  reflection: text("reflection").notNull().default(""),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 
