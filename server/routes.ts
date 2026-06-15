@@ -1294,6 +1294,64 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  /**
+   * POST /api/traffic/snapshot
+   * Record one marketing-traffic data point. The agent calls this whenever the
+   * founder pastes a new Cloudflare unique-visitor number in chat. Admin-only
+   * (the requireAuth middleware gates anything not in PUBLIC).
+   *
+   * Body: { source: string, metric: string, value: number, note?: string,
+   *         recordedAt?: ISO string (defaults to now) }
+   */
+  app.post("/api/traffic/snapshot", (req, res) => {
+    try {
+      const body = req.body || {};
+      const source = String(body.source || "").trim();
+      const metric = String(body.metric || "").trim();
+      const value  = Number(body.value);
+      const note   = String(body.note || "").trim();
+      const recordedAt = body.recordedAt ? String(body.recordedAt) : new Date().toISOString();
+
+      if (!source || !metric || !Number.isFinite(value)) {
+        return res.status(400).json({ error: "source, metric, and numeric value are required" });
+      }
+      const row = storage.createTrafficSnapshot({ source, metric, value, note, recordedAt });
+      res.json({ ok: true, snapshot: row });
+    } catch (err: any) {
+      console.error("Traffic snapshot error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/traffic/latest
+   * Returns the latest snapshot for a (source, metric) pair plus the prior
+   * snapshot (so the UI can show delta) and a short history.
+   *
+   * Query: ?source=cloudflare&metric=uniques_30d&history=14
+   */
+  app.get("/api/traffic/latest", (req, res) => {
+    try {
+      const source = (req.query.source as string) || "cloudflare";
+      const metric = (req.query.metric as string) || "uniques_30d";
+      const historyLimit = req.query.history != null ? Number(req.query.history) : 14;
+
+      const history = storage.getTrafficHistory(source, metric, historyLimit);
+      const latest  = history[0];
+      const prior   = history[1];
+      res.json({
+        source,
+        metric,
+        latest: latest || null,
+        prior:  prior  || null,
+        history,
+      });
+    } catch (err: any) {
+      console.error("Traffic latest error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Affiliations (link anonymous session to a church) ────────────────────────
 
   /**

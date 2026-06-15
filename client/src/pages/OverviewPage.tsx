@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Users, Mail, TrendingUp, Calendar, Clock, UserPlus, Send } from "lucide-react";
+import { Users, Mail, TrendingUp, Calendar, Clock, UserPlus, Send, Globe } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Activity, Campaign } from "@shared/schema";
 
@@ -63,6 +63,25 @@ export default function OverviewPage() {
 
   const upcomingCampaigns = campaigns?.filter(c => c.status === "scheduled").slice(0, 4) ?? [];
 
+  // Marketing Site — Cloudflare 30-day unique visitors. The agent POSTs new
+  // snapshots whenever the founder pastes a fresh Cloudflare number in chat,
+  // so the latest row here is always the most recent reading.
+  interface TrafficSnap { id: number; source: string; metric: string; value: number; recordedAt: string; note: string; }
+  const { data: traffic, isLoading: trafficLoading } = useQuery<{ latest: TrafficSnap | null; prior: TrafficSnap | null }>({
+    queryKey: ["/api/traffic/latest", "cloudflare", "uniques_30d"],
+    queryFn: () => apiRequest("GET", `/api/traffic/latest?source=cloudflare&metric=uniques_30d`).then(r => r.json()),
+  });
+  const trafficLatest = traffic?.latest;
+  const trafficPrior  = traffic?.prior;
+  const trafficValue  = trafficLoading ? "—" : (trafficLatest ? trafficLatest.value.toLocaleString() : "—");
+  const trafficSub    = trafficLoading
+    ? "Loading…"
+    : trafficLatest
+      ? (trafficPrior
+          ? `${trafficLatest.value - trafficPrior.value >= 0 ? "+" : ""}${(trafficLatest.value - trafficPrior.value).toLocaleString()} vs prior · as of ${new Date(trafficLatest.recordedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+          : `as of ${new Date(trafficLatest.recordedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`)
+      : "No data yet";
+
   return (
     <>
       <Topbar />
@@ -101,7 +120,14 @@ export default function OverviewPage() {
               sub: "Industry avg: 3.5%",
               icon: <TrendingUp size={16} style={{ color: "hsl(var(--primary))" }} />,
             },
+            {
+              label: "Marketing Site Uniques",
+              value: trafficValue,
+              sub: trafficSub,
+              icon: <Globe size={16} style={{ color: "#01696F" }} />,
+            },
           ].map((kpi) => (
+
             <div className="kpi-card" key={kpi.label} data-testid={`kpi-${kpi.label.toLowerCase().replace(/\s+/g, "-")}`}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
                 <div className="kpi-label">{kpi.label}</div>
