@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Users, Mail, TrendingUp, Calendar, Clock, UserPlus, Send } from "lucide-react";
+import { Link } from "wouter";
+import { Users, Mail, TrendingUp, Calendar, Clock, UserPlus, Send, MessageSquare, ArrowRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Activity, Campaign } from "@shared/schema";
 
@@ -62,6 +63,27 @@ export default function OverviewPage() {
   });
 
   const upcomingCampaigns = campaigns?.filter(c => c.status === "scheduled").slice(0, 4) ?? [];
+
+  // Trending Topics — last 7 days of Q&A activity (powered by /api/insights/qa).
+  // Pulls from the data of truth used by /questions so the numbers always match.
+  const { data: trendingData, isLoading: trendingLoading } = useQuery<{
+    topTopics: { topic: string; count: number }[];
+    questionTotal: number;
+    signedInTotal: number;
+    anonTotal: number;
+    total: number;
+  }>({
+    queryKey: ["/api/insights/qa", "trending-7d"],
+    queryFn: () => apiRequest("GET", "/api/insights/qa?days=7&limit=1").then(r => r.json()),
+    refetchInterval: 60_000,
+  });
+  const TOPIC_EMOJIS: Record<string, string> = {
+    Anxiety: "\uD83D\uDD4A\uFE0F", Forgiveness: "\uD83E\uDD1D", Faith: "\u2720\uFE0F", Prayer: "\uD83D\uDE4F",
+    Peace: "\u262E\uFE0F", Love: "\u2764\uFE0F", Hope: "\uD83C\uDF05", Temptation: "\u2694\uFE0F",
+    Suffering: "\uD83D\uDD6F\uFE0F", Salvation: "\uD83D\uDCAB", Anger: "\uD83C\uDF0A", Wisdom: "\uD83D\uDCD6",
+  };
+  const trendingTopics = (trendingData?.topTopics ?? []).slice(0, 6);
+  const maxTrendCount  = trendingTopics[0]?.count ?? 1;
 
   return (
     <>
@@ -199,6 +221,78 @@ export default function OverviewPage() {
                   <span className="badge badge-scheduled">scheduled</span>
                 </div>
               ))
+            )}
+          </div>
+
+          {/* Trending Topics (last 7 days) — Q&A from the insights table. */}
+          <div style={{
+            background: "hsl(var(--card))",
+            border: "1px solid hsl(var(--border))",
+            borderRadius: "0.625rem",
+            padding: "1.125rem",
+            gridColumn: "1 / -1",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+              <h2 style={{ fontSize: "0.85rem", fontWeight: 700, margin: 0, display: "flex", alignItems: "center", gap: "6px" }}>
+                <MessageSquare size={14} style={{ color: "hsl(var(--primary))" }} />
+                Trending Topics
+                <span style={{ fontSize: "0.7rem", fontWeight: 500, color: "hsl(var(--muted-foreground))", marginLeft: "4px" }}>
+                  Last 7 days
+                </span>
+              </h2>
+              <Link href="/questions" style={{ fontSize: "0.75rem", color: "hsl(var(--primary))", textDecoration: "none", display: "flex", alignItems: "center", gap: "3px" }}>
+                View all questions <ArrowRight size={11} />
+              </Link>
+            </div>
+
+            {/* Mini KPI strip */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px", marginBottom: "0.875rem" }}>
+              {[
+                { label: "Questions Asked", value: trendingLoading ? "\u2014" : (trendingData?.questionTotal ?? 0).toLocaleString() },
+                { label: "Signed-in",       value: trendingLoading ? "\u2014" : (trendingData?.signedInTotal ?? 0).toLocaleString() },
+                { label: "Anonymous",       value: trendingLoading ? "\u2014" : (trendingData?.anonTotal ?? 0).toLocaleString() },
+              ].map(k => (
+                <div key={k.label} style={{
+                  background: "hsl(var(--muted) / 0.4)", borderRadius: "6px",
+                  padding: "7px 10px",
+                }}>
+                  <div style={{ fontSize: "0.68rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "hsl(var(--muted-foreground))" }}>{k.label}</div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "hsl(var(--foreground))", fontVariantNumeric: "tabular-nums" }}>{k.value}</div>
+                </div>
+              ))}
+            </div>
+
+            {trendingLoading ? (
+              <p style={{ fontSize: "0.8rem", color: "hsl(var(--muted-foreground))" }}>Loading…</p>
+            ) : trendingTopics.length === 0 ? (
+              <p style={{ fontSize: "0.8rem", color: "hsl(var(--muted-foreground))" }}>No Q&amp;A activity in the last 7 days yet.</p>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "7px" }}>
+                {trendingTopics.map((t, i) => {
+                  const pct = Math.round((t.count / maxTrendCount) * 100);
+                  return (
+                    <Link key={t.topic} href={`/questions`} style={{ textDecoration: "none" }}>
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: "9px",
+                        padding: "7px 9px", borderRadius: "7px",
+                        background: i === 0 ? "hsl(var(--primary) / 0.06)" : "hsl(var(--muted) / 0.4)",
+                        border: i === 0 ? "1px solid hsl(var(--primary) / 0.2)" : "1px solid transparent",
+                      }}>
+                        <span style={{ fontSize: "1rem" }}>{TOPIC_EMOJIS[t.topic] || "\uD83D\uDCD6"}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "3px" }}>
+                            <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "hsl(var(--foreground))" }}>{t.topic}</span>
+                            <span style={{ fontSize: "0.72rem", color: "hsl(var(--muted-foreground))", fontVariantNumeric: "tabular-nums" }}>{t.count}</span>
+                          </div>
+                          <div style={{ height: "4px", background: "hsl(var(--border))", borderRadius: "3px", overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${pct}%`, background: "hsl(var(--primary))", borderRadius: "3px" }} />
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
             )}
           </div>
 
