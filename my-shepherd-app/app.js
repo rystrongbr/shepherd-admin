@@ -715,17 +715,31 @@ function handleNextQuestion() {
 }
 
 // ── Insight Logging ───────────────────────────────────────────────────────
-async function logInsight(topic, question = "") {
+// Logs a topic tap or a Q&A pair to the admin insights table. The optional
+// payload (verseRef / verseText / reflection) lets the /questions admin
+// dashboard show the full response for anonymous traffic — not just the
+// ~30% of signed-in chats. Empty values are fine; they preserve the
+// existing topic-tap-only telemetry.
+async function logInsight(topic, question = "", payload = {}) {
   try {
+    // Tag signed-in traffic so the admin Q&A dashboard can split signed-in
+    // vs anonymous totals without joining tables. Anonymous keeps the raw
+    // session UUID; signed-in uses a `user-{id}` prefix.
+    const sessionTag = (currentUser && currentUser.id)
+      ? `user-${currentUser.id}`
+      : SESSION_ID;
     await fetch(`${API_BASE}/api/insights/log`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         topic,
         question,
-        sessionId: SESSION_ID,
+        sessionId: sessionTag,
         churchId: churchId || null,
         location: "",
+        verseRef:   payload.verseRef   || "",
+        verseText:  payload.verseText  || "",
+        reflection: payload.reflection || "",
       }),
     });
   } catch (e) {
@@ -1204,6 +1218,12 @@ async function showResponse(topic, question) {
       renderFollowUpChipsFromList(data.followUps || []);
       renderShareButton();
       if (currentVerse) saveChatToHistory(topic, question, currentVerse, data.answer);
+      // Admin Q&A dashboard — log the response payload for all traffic.
+      logInsight(topic, question, {
+        verseRef:   currentVerse ? currentVerse.ref  : "",
+        verseText:  currentVerse ? currentVerse.text : "",
+        reflection: data.answer || "",
+      });
       askBtn.style.display = "block";
       isLoading = false;
       renderActionButtons();
@@ -1224,6 +1244,14 @@ async function showResponse(topic, question) {
     renderFollowUpChipsFromList(followUps);
     renderShareButton();
     saveChatToHistory(topic, question, verse, reflection);
+    // Admin Q&A dashboard — log the response payload for all traffic.
+    if (question) {
+      logInsight(topic, question, {
+        verseRef:   verse ? verse.ref  : "",
+        verseText:  verse ? verse.text : "",
+        reflection: reflection || "",
+      });
+    }
   } catch (err) {
     console.error("AI error, using fallback:", err.message);
     const fallback = getFallbackResponse(topic);
@@ -1231,6 +1259,13 @@ async function showResponse(topic, question) {
     renderFollowUpChips(topic);
     renderShareButton();
     saveChatToHistory(topic, question, fallback.verse, fallback.reflection);
+    if (question) {
+      logInsight(topic, question, {
+        verseRef:   fallback.verse ? fallback.verse.ref  : "",
+        verseText:  fallback.verse ? fallback.verse.text : "",
+        reflection: fallback.reflection || "",
+      });
+    }
   }
 
   askBtn.style.display = "block";
@@ -1258,8 +1293,8 @@ function renderFollowUpChipsFromList(followUps) {
       const activeBtn = document.querySelector(`[data-topic="${finalTopic}"]`);
       if (activeBtn) activeBtn.classList.add("active");
       currentTopic = finalTopic;
+      // logInsight fires inside showResponse() once the response payload is ready.
       showResponse(finalTopic, chipTopic);
-      logInsight(finalTopic, chipTopic);
     });
   });
 }
@@ -1377,7 +1412,8 @@ async function handleAsk() {
   currentTopic = topic;
 
   questionCount++;
-  logInsight(topic, q);
+  // logInsight fires inside showResponse() once the response payload is ready,
+  // so the admin Q&A dashboard captures the full Q+verse+reflection.
   await showResponse(topic, q);
   input.value = "";
   document.getElementById("char-hint").textContent = "";
