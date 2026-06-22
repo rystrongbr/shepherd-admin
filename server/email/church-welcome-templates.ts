@@ -31,7 +31,7 @@ export const WELCOME_HTML_STAFF = `<!DOCTYPE html>
             <td style="padding:32px 32px 16px;">
               <p style="margin:0 0 8px;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;color:#964219;font-weight:600;">MY SHEPHERD &middot; WELCOME</p>
               <h1 style="margin:0 0 16px;font-family:Georgia,'DM Serif Display',serif;font-size:28px;line-height:1.25;color:#5C2A0E;">Welcome, {{contactName}}.</h1>
-              <p style="margin:0 0 16px;font-size:16px;line-height:1.55;">Brother, thank you for signing <strong>{{churchName}}</strong> up for My Shepherd &mdash; that means a lot.</p>
+              <p style="margin:0 0 16px;font-size:16px;line-height:1.55;">Brother, thank you for reaching out about My Shepherd &mdash; that means a lot.</p>
               <p style="margin:0 0 24px;font-size:16px;line-height:1.55;">I built this as a free, KJV-anchored Scripture companion for believers who want thoughtful answers that come directly from the Bible &mdash; not paraphrased or invented by a language model.</p>
               <p style="margin:0 0 16px;font-size:16px;line-height:1.55;">Here's a small menu of ways to introduce it to your congregation. Pick whichever fits your style this week:</p>
             </td>
@@ -110,8 +110,7 @@ export const WELCOME_HTML_STAFF = `<!DOCTYPE html>
 
 export const WELCOME_TEXT_STAFF = `Welcome, {{contactName}}.
 
-Brother, thank you for signing {{churchName}} up for My Shepherd — that
-means a lot.
+Brother, thank you for reaching out about My Shepherd — that means a lot.
 
 I built this as a free, KJV-anchored Scripture companion for believers who want
 thoughtful answers that come directly from the Bible — not paraphrased or
