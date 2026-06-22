@@ -20,6 +20,12 @@
 
 import type { Express, Request, Response } from "express";
 import { sgSendMail } from "./email/sendgrid-client";
+import {
+  pickWelcomeTemplate,
+  escapeHtml,
+  VALID_CHURCH_ROLES,
+  type ChurchRole,
+} from "./email/church-welcome-templates";
 import { storage } from "./storage";
 
 const CHURCH_PROSPECTS_DATA_SOURCE_ID =
@@ -36,6 +42,7 @@ type ChurchSignupPayload = {
   location?: string;
   engagementChallenge?: string;
   source?: string;           // defaults to "Landing Page Form"
+  role?: ChurchRole;         // "staff" | "member" | "exploring" — drives welcome-email persona
 };
 
 const VALID_SIZES = new Set(["<100", "100-500", "500-2000", "2000+"]);
@@ -54,9 +61,7 @@ function isLikelyEmail(s: string): boolean {
  * Create a page in the Church Prospects Notion database via the REST API.
  * We use fetch (Node 18+) directly so we don't need to add a new dependency.
  */
-async function writeToNotion(payload: Required<Pick<ChurchSignupPayload,
-  "churchName" | "contactName" | "email" | "phone" | "congregationSize" | "location" | "engagementChallenge" | "source"
->>): Promise<{ ok: true; pageId: string } | { ok: false; error: string }> {
+async function writeToNotion(payload: ChurchSignupPayload & { churchName: string; source: string }): Promise<{ ok: true; pageId: string } | { ok: false; error: string }> {
   const apiKey = process.env.NOTION_API_KEY;
   if (!apiKey) return { ok: false, error: "NOTION_API_KEY not configured" };
 
@@ -89,6 +94,17 @@ async function writeToNotion(payload: Required<Pick<ChurchSignupPayload,
     properties["Engagement Challenge"] = {
       rich_text: [{ type: "text", text: { content: payload.engagementChallenge } }],
     };
+  }
+  if (payload.role && VALID_CHURCH_ROLES.has(payload.role as ChurchRole)) {
+    // Notion property "Role" is a Select column with options:
+    //   Staff / Leadership, Member / Parishioner, Exploring
+    const roleLabel =
+      payload.role === "staff"
+        ? "Staff / Leadership"
+        : payload.role === "member"
+        ? "Member / Parishioner"
+        : "Exploring";
+    properties["Role"] = { select: { name: roleLabel } };
   }
   properties["Source"] = {
     select: { name: VALID_SOURCES.has(payload.source) ? payload.source : "Landing Page Form" },
@@ -170,6 +186,7 @@ async function sendNotificationEmail(
       ${row("Contact", payload.contactName || "")}
       ${row("Email", payload.email || "")}
       ${row("Phone", payload.phone || "")}
+      ${row("Role", payload.role || "")}
       ${row("Congregation Size", payload.congregationSize || "")}
       ${row("Location", payload.location || "")}
       ${row("Engagement Challenge", payload.engagementChallenge || "")}
@@ -190,9 +207,64 @@ async function sendNotificationEmail(
   return { ok: result.success, error: result.error };
 }
 
+/**
+ * Send the persona-routed welcome email to the form submitter.
+ * Sent personally as Ryan Armstrong <ryan@myshepherdapp.church> regardless
+ * of SENDGRID_FROM_EMAIL, so the recipient sees a founder reply, not a brand.
+ * Best-effort — a failure here is logged but doesn't block the success response.
+ */
+async function sendChurchWelcomeEmail(
+  payload: ChurchSignupPayload,
+): Promise<{ ok: boolean; error?: string; skipped?: boolean }> {
+  const apiKey = process.env.SENDGRID_API_KEY || storage.getChurch(1)?.sendgridApiKey;
+  if (!apiKey) return { ok: false, error: "SENDGRID_API_KEY not configured" };
+  if (!payload.email) return { ok: false, skipped: true, error: "No recipient email on submission" };
+
+  // Founder-led envelope: locked to ryan@ regardless of the brand FROM env var.
+  // If FOUNDER_FROM_EMAIL is set we use it as an override hook for staging.
+  const fromEmail = process.env.FOUNDER_FROM_EMAIL || "ryan@myshepherdapp.church";
+  const fromName = "Ryan Armstrong";
+
+  const contactName = payload.contactName || "friend";
+  const churchName = payload.churchName || "your church";
+
+  const { html: htmlTpl, text: textTpl, subjectSuffix } = pickWelcomeTemplate(payload.role);
+
+  const html = htmlTpl
+    .replace(/\{\{contactName\}\}/g, escapeHtml(contactName))
+    .replace(/\{\{churchName\}\}/g, escapeHtml(churchName));
+
+  const text = textTpl
+    .replace(/\{\{contactName\}\}/g, contactName)
+    .replace(/\{\{churchName\}\}/g, churchName);
+
+  const subject = `My Shepherd — welcome, ${churchName} (${subjectSuffix})`;
+
+  const result = await sgSendMail(
+    { apiKey, fromEmail, fromName },
+    {
+      to: payload.email,
+      replyTo: "ryan@myshepherdapp.church",
+      subject,
+      html,
+      text,
+      categories: [
+        "church-prospect-welcome",
+        `church-prospect-welcome-${payload.role || "unknown"}`,
+      ],
+    },
+  );
+  return { ok: result.success, error: result.error };
+}
+
 export function registerChurchSignupRoute(app: Express) {
   app.post("/api/church-signup", async (req: Request, res: Response) => {
     try {
+      const rawRole = sanitizeString(req.body?.role, 20).toLowerCase();
+      const role: ChurchRole | undefined = VALID_CHURCH_ROLES.has(rawRole as ChurchRole)
+        ? (rawRole as ChurchRole)
+        : undefined;
+
       const body: ChurchSignupPayload = {
         churchName: sanitizeString(req.body?.churchName, 200),
         contactName: sanitizeString(req.body?.contactName, 200),
@@ -202,6 +274,7 @@ export function registerChurchSignupRoute(app: Express) {
         location: sanitizeString(req.body?.location, 200),
         engagementChallenge: sanitizeString(req.body?.engagementChallenge, 2000),
         source: sanitizeString(req.body?.source, 50) || "Landing Page Form",
+        role,
       };
 
       // Minimum required: church name AND (email OR phone)
@@ -234,7 +307,15 @@ export function registerChurchSignupRoute(app: Express) {
         console.error("church-signup: email send failed:", emailResult.error);
       }
 
-      // If BOTH failed, surface a 500 so the user can retry.
+      // Founder welcome reply — best-effort, never blocks the success response.
+      const welcomeResult = await sendChurchWelcomeEmail(body);
+      if (!welcomeResult.ok && !welcomeResult.skipped) {
+        console.error("church-signup: welcome email failed:", welcomeResult.error);
+      }
+
+      // If BOTH the internal notify AND Notion write failed, surface a 500 so
+      // the user can retry. The founder welcome is purely additive and never
+      // gates the response.
       if (!notionResult.ok && !emailResult.ok) {
         return res.status(500).json({
           ok: false,
@@ -247,6 +328,7 @@ export function registerChurchSignupRoute(app: Express) {
         message: "Thank you! We'll be in touch shortly.",
         notionSaved: notionResult.ok,
         emailSent: emailResult.ok,
+        welcomeSent: welcomeResult.ok,
       });
     } catch (err: any) {
       console.error("church-signup handler error:", err);
