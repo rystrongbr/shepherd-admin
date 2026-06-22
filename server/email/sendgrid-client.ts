@@ -113,6 +113,7 @@ export async function sgSendMail(
     text?: string;
     categories?: string[];
     customArgs?: Record<string, string>;
+    replyTo?: string;
   },
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
   if (emailConfig.dryRun) {
@@ -128,6 +129,7 @@ export async function sgSendMail(
       const [response] = await sgMail.send({
         to: payload.to,
         from: { email: config.fromEmail, name: config.fromName || config.fromEmail },
+        replyTo: payload.replyTo,
         subject: payload.subject,
         html: payload.html,
         text: payload.text,
