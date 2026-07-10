@@ -63,6 +63,19 @@ export interface DigestSummary {
   byReason: Record<DeactivationRow["reasonCategory"], number>;
   /** Donors among newDeactivations — these are the highest-priority reviews. */
   donorDeactivations: DeactivationRow[];
+  /** Anonymous crisis-safety signal counts in the window (category only). */
+  crisisSignals: CrisisSignalSummary;
+}
+
+/**
+ * Anonymous rollup of crisis-safety signals fired in the digest window.
+ * Counts by category ONLY — no message content is ever stored or surfaced.
+ */
+export interface CrisisSignalSummary {
+  total: number;
+  byCategory: { category: string; count: number }[];
+  /** True if any ACUTE_DANGER or METHOD_SEEKING fired — warrants follow-up review. */
+  hasHighUrgency: boolean;
 }
 
 export interface RestoreResult {
@@ -199,7 +212,22 @@ export function buildDigestSummary(now: Date = new Date()): DigestSummary {
     totalDeactivated,
     byReason,
     donorDeactivations: newDeactivations.filter((r) => r.isDonor),
+    crisisSignals: buildCrisisSignalSummary(windowFromIso, windowToIso),
   };
+}
+
+/**
+ * Roll up anonymous crisis-safety signals for the window. Counts by category
+ * only. NO message content is stored anywhere, so none can be surfaced here.
+ */
+export function buildCrisisSignalSummary(fromIso: string, toIso: string): CrisisSignalSummary {
+  const rows = data.getCrisisSignalCounts(fromIso, toIso);
+  const total = rows.reduce((sum, r) => sum + r.count, 0);
+  const byCategory = [...rows].sort((a, b) => b.count - a.count);
+  const hasHighUrgency = rows.some(
+    (r) => (r.category === "ACUTE_DANGER" || r.category === "METHOD_SEEKING") && r.count > 0,
+  );
+  return { total, byCategory, hasHighUrgency };
 }
 
 // ─── Restore ─────────────────────────────────────────────────────────────────

@@ -343,15 +343,24 @@ function getFallbackResponse(topic) {
 
 // AI calls go to Railway via GET (Perplexity iframe allows GET to external domains).
 // POST is blocked by sandbox but GET requests work fine.
+// Identity params attached to every AI call. They let the server's crisis-safety
+// middleware attribute an anonymous signal to a user/session (category only —
+// never message content). Safe to send on every request.
+function identityParams() {
+  const p = { sessionId: SESSION_ID };
+  if (currentUser && currentUser.id) p.userId = String(currentUser.id);
+  return p;
+}
+
 async function fetchAIResponse(topic, question) {
-  const params = new URLSearchParams({ topic, question: question || "" });
+  const params = new URLSearchParams({ topic, question: question || "", ...identityParams() });
   const res = await fetch(`${API_BASE}/api/ai/scripture?${params.toString()}`);
   if (!res.ok) throw new Error("AI request failed: " + res.status);
   return res.json();
 }
 
 async function fetchDeeperResponse(topic, question, prevRef) {
-  const params = new URLSearchParams({ topic, question: question || "", prevRef: prevRef || "" });
+  const params = new URLSearchParams({ topic, question: question || "", prevRef: prevRef || "", ...identityParams() });
   const res = await fetch(`${API_BASE}/api/ai/deeper?${params.toString()}`);
   if (!res.ok) throw new Error("Deeper request failed: " + res.status);
   return res.json();
@@ -359,7 +368,7 @@ async function fetchDeeperResponse(topic, question, prevRef) {
 
 // ── v2 fetchers (Sonnet, question-led, multi-citation) ───────────────────────
 async function fetchV2Ask(question, topicHint) {
-  const params = new URLSearchParams({ question, topicHint: topicHint || "" });
+  const params = new URLSearchParams({ question, topicHint: topicHint || "", ...identityParams() });
   const res = await fetch(`${API_BASE}/api/ai/ask?${params.toString()}`);
   if (!res.ok) throw new Error("AI v2 request failed: " + res.status);
   return res.json();
@@ -409,6 +418,69 @@ function buildV2ResponseHTML(question, data) {
       <div class="v2-citations">${citationsHTML}</div>
     </div>
   `;
+}
+
+// ── Crisis safety card ───────────────────────────────────────────────────────
+// When the server intercepts crisis language it returns a payload shaped
+// { type: 'crisis_safety', ... } from ANY of the AI endpoints instead of the
+// normal answer. We render a distinct, warm-cream card (no marketing chrome,
+// prominent call buttons). The user is NOT locked out — they can keep chatting.
+function buildCrisisResponseHTML(r) {
+  const isUrgent = r.urgency === "IMMEDIATE" || r.urgency === "HIGH";
+
+  const scriptureBlock = (s) => s ? `
+    <blockquote class="crisis-scripture">
+      <span class="crisis-scripture-text">“${esc(s.text)}”</span>
+      <cite class="crisis-scripture-ref">— ${esc(s.reference)} (KJV)</cite>
+    </blockquote>` : "";
+
+  const primary = r.resources && r.resources.primary;
+  const secondary = r.resources && r.resources.secondary;
+  const telHref = (num) => `tel:${String(num || "").replace(/\D/g, "")}`;
+  const secondaryHref = secondary
+    ? (/^\d{5,6}$/.test(secondary.number) ? `sms:${secondary.number}` : telHref(secondary.number))
+    : "";
+
+  const primaryBtn = primary ? `
+    <a class="crisis-btn crisis-btn-primary" href="${telHref(primary.number)}" data-testid="crisis-call-primary">
+      Call ${esc(primary.number)} — ${esc(primary.name)}
+    </a>` : "";
+
+  const secondaryBtn = secondary ? `
+    <a class="crisis-btn crisis-btn-secondary" href="${secondaryHref}" data-testid="crisis-call-secondary">
+      ${esc(secondary.text_action || `Contact ${secondary.name} (${secondary.number})`)}
+    </a>` : "";
+
+  return `
+    <div class="crisis-card${isUrgent ? " crisis-card-urgent" : ""}" role="alert">
+      ${isUrgent ? `<div class="crisis-urgent-banner">Please read this before anything else</div>` : ""}
+      <p class="crisis-ack">${esc(r.acknowledgment)}</p>
+      ${scriptureBlock(r.scripture_primary)}
+      ${scriptureBlock(r.scripture_secondary)}
+      <div class="crisis-resources">
+        <p class="crisis-resources-title">Please reach out — right now.</p>
+        ${primaryBtn}
+        ${secondaryBtn}
+      </div>
+      <p class="crisis-nudge">${esc(r.trusted_adult_nudge)}</p>
+      <p class="crisis-footer">${esc(r.footer)}</p>
+    </div>
+  `;
+}
+
+// If a fetched AI payload is a crisis interception, render the card and return
+// true (caller must stop its normal render + skip any content persistence).
+// NOTHING about the user's message is saved on this path.
+function renderCrisisIfPresent(data) {
+  if (!data || data.type !== "crisis_safety") return false;
+  const content = document.getElementById("response-content");
+  const chips   = document.getElementById("follow-up-chips");
+  document.getElementById("action-btn-row")?.remove();
+  document.getElementById("btn-share-verse")?.remove();
+  if (chips) chips.style.display = "none";
+  content.innerHTML = buildCrisisResponseHTML(data);
+  document.getElementById("response-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  return true;
 }
 
 // Wire drill-down buttons after a v2 response is inserted into the DOM.
@@ -480,6 +552,7 @@ async function goDeeperOnCurrent() {
         ? `${v2LastQuestion} — go deeper. Beyond ${priorRefs}, what else does scripture say?`
         : `${v2LastQuestion} — go deeper. What else does scripture say?`;
       const data = await fetchV2Ask(deeperQuestion, currentTopic);
+      if (renderCrisisIfPresent(data)) { isLoading = false; return; }
       v2LastQuestion = deeperQuestion;
       v2LastResponse = data;
       currentVerse = data.citations[0] ? { ref: data.citations[0].ref, text: data.citations[0].text } : null;
@@ -499,6 +572,7 @@ async function goDeeperOnCurrent() {
 
   try {
     const aiData = await fetchDeeperResponse(currentTopic, question, prevRef);
+    if (renderCrisisIfPresent(aiData)) { isLoading = false; return; }
     const verse      = aiData.verse      || getFallbackResponse(currentTopic).verse;
     const reflection = aiData.reflection || getFallbackResponse(currentTopic).reflection;
     const followUps  = aiData.followUpTopics || FOLLOW_UP[currentTopic] || [];
@@ -1208,6 +1282,13 @@ async function showResponse(topic, question) {
   if (USE_AI_V2 && question) {
     try {
       const data = await fetchV2Ask(question, topic);
+      // Crisis interception: render the safety card and stop. Do NOT persist
+      // the chat or log an insight — no message content is stored on this path.
+      if (renderCrisisIfPresent(data)) {
+        askBtn.style.display = "block";
+        isLoading = false;
+        return;
+      }
       v2LastQuestion = question;
       v2LastResponse = data;
       // currentVerse points to citation[0] so the existing share button
@@ -1237,6 +1318,12 @@ async function showResponse(topic, question) {
 
   try {
     const aiData = await fetchAIResponse(topic, question);
+    // Crisis interception on the legacy path too. Stop before any persistence.
+    if (renderCrisisIfPresent(aiData)) {
+      askBtn.style.display = "block";
+      isLoading = false;
+      return;
+    }
     const verse      = aiData.verse      || getFallbackResponse(topic).verse;
     const reflection = aiData.reflection || getFallbackResponse(topic).reflection;
     const followUps  = aiData.followUpTopics || FOLLOW_UP[topic] || [];
