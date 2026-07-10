@@ -101,6 +101,10 @@ export const data = {
     storage.restoreDeactivatedMember(memberId, clearUnsubscribe),
   recomputeDonorFlags: (): { updated: number; total: number } =>
     storage.recomputeDonorFlags(),
+
+  // ─── Crisis safety signals (anonymous category counts for founder digest) ──
+  getCrisisSignalCounts: (fromIso: string, toIso: string): { category: string; count: number }[] =>
+    storage.getCrisisSignalCounts(fromIso, toIso),
 };
 
 export type EmailData = typeof data;

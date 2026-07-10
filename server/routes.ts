@@ -4,6 +4,7 @@ import { randomBytes } from "crypto";
 import { storage } from "./storage";
 import { getScriptureResponse, getDeeperResponse } from "./ai";
 import { ask as askV2, drillDown as drillDownV2, isV2Configured } from "./ai-v2";
+import { crisisSafetyCheck } from "./crisis";
 import { insertMemberSchema, insertCampaignSchema, insertSequenceSchema, insertChurchSchema, insertInsightSchema, insertAffiliationSchema } from "@shared/schema";
 import { z } from "zod";
 import {
@@ -324,7 +325,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * POST /api/ai/scripture
    * Body: { topic, question? }
    */
-  app.post("/api/ai/scripture", async (req, res) => {
+  app.post("/api/ai/scripture", crisisSafetyCheck, async (req, res) => {
     const { topic, question = "" } = req.body;
     if (!topic) return res.status(400).json({ error: "topic is required" });
     try {
@@ -340,7 +341,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * GET /api/ai/scripture?topic=Anxiety&question=...
    * Same as POST but via GET so iframe sandbox fetch restrictions don't block it.
    */
-  app.get("/api/ai/scripture", async (req, res) => {
+  app.get("/api/ai/scripture", crisisSafetyCheck, async (req, res) => {
     const topic = String(req.query.topic || "").trim();
     const question = String(req.query.question || "").trim();
     if (!topic) return res.status(400).json({ error: "topic is required" });
@@ -357,7 +358,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * GET /api/ai/deeper?topic=Anxiety&question=...&prevRef=Philippians+4:6
    * Returns a deeper, different scripture on the same topic.
    */
-  app.get("/api/ai/deeper", async (req, res) => {
+  app.get("/api/ai/deeper", crisisSafetyCheck, async (req, res) => {
     const topic    = String(req.query.topic    || "").trim();
     const question = String(req.query.question || "").trim();
     const prevRef  = String(req.query.prevRef  || "").trim();
@@ -382,7 +383,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * topicHint is optional and treated as soft context only — the question
    * is the primary signal.
    */
-  app.get("/api/ai/ask", async (req, res) => {
+  app.get("/api/ai/ask", crisisSafetyCheck, async (req, res) => {
     const question  = String(req.query.question  || "").trim();
     const topicHint = String(req.query.topicHint || "").trim();
     if (!question) return res.status(400).json({ error: "question is required" });

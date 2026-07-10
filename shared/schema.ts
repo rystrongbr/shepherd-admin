@@ -358,3 +358,26 @@ export const memberSignups = sqliteTable("member_signups", {
 export const insertMemberSignupSchema = createInsertSchema(memberSignups).omit({ id: true });
 export type InsertMemberSignup = z.infer<typeof insertMemberSignupSchema>;
 export type MemberSignup = typeof memberSignups.$inferSelect;
+
+// ─── Crisis Safety Signals ───────────────────────────────────────────────────
+// Append-only log of every crisis-language interception. Privacy is the point:
+// we store ONLY the trigger category, an optional anonymous session id, and an
+// optional loose FK to the app user. The message content is NEVER written here
+// (nor logged anywhere else). This lets the founder digest surface anonymous
+// pattern counts without any visibility into what a user actually typed.
+export const crisisSafetySignals = sqliteTable("crisis_safety_signals", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  // Nullable, loose FK to app_users.id (no enforcement — anonymous sessions
+  // have no user). Signed-in users let us de-dupe patterns per person later.
+  userId: integer("user_id"),
+  // Nullable anonymous browser session id (the app's SESSION_ID). Never PII.
+  sessionId: text("session_id"),
+  // One of the crisisPatterns categories: ACUTE_DANGER | METHOD_SEEKING |
+  // SUICIDAL_IDEATION | ABUSE_DISCLOSURE | SELF_HARM.
+  category: text("category").notNull(),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+
+export const insertCrisisSafetySignalSchema = createInsertSchema(crisisSafetySignals).omit({ id: true });
+export type InsertCrisisSafetySignal = z.infer<typeof insertCrisisSafetySignalSchema>;
+export type CrisisSafetySignal = typeof crisisSafetySignals.$inferSelect;

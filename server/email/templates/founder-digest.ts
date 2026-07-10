@@ -11,7 +11,55 @@
  * rows, then everyone else.
  */
 
-import type { DigestSummary, DeactivationRow } from "../deactivations";
+import type { DigestSummary, DeactivationRow, CrisisSignalSummary } from "../deactivations";
+
+const CRISIS_CATEGORY_LABEL: Record<string, string> = {
+  ACUTE_DANGER:      "Acute danger",
+  METHOD_SEEKING:    "Method seeking",
+  SUICIDAL_IDEATION: "Suicidal ideation",
+  ABUSE_DISCLOSURE:  "Abuse disclosure",
+  SELF_HARM:         "Self-harm",
+};
+
+/**
+ * Crisis-safety signals block. Renders anonymous category counts only — there
+ * is no member identity and no message content, by design. When a quiet day
+ * (total 0) we still show the section so its absence isn't mistaken for a bug.
+ */
+function crisisSignalsHtml(c: CrisisSignalSummary): string {
+  const rows =
+    c.byCategory.length === 0
+      ? `<div style="color:#8a7f73;font-size:13px;font-style:italic;">No crisis language detected in this window.</div>`
+      : c.byCategory
+          .map(
+            (r) => `
+            <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1ece4;font-size:14px;">
+              <span style="color:#4a4038;">${escapeHtml(CRISIS_CATEGORY_LABEL[r.category] || r.category)}</span>
+              <strong style="color:#3a2e1e;">${r.count}</strong>
+            </div>`,
+          )
+          .join("");
+
+  const followUp = c.hasHighUrgency
+    ? `<div style="margin-top:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;">
+         <strong>Follow-up:</strong> ACUTE_DANGER or METHOD_SEEKING fired. Review whether app copy or a proactive push notification should follow up.
+       </div>`
+    : "";
+
+  return `
+    <div style="padding:14px 16px;background:#f9f5f0;border:1px solid #e7dfd2;border-radius:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+        <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:#8a7f73;">Signals fired</span>
+        <span style="font-size:24px;font-weight:700;color:#3a2e1e;line-height:1;">${c.total}</span>
+      </div>
+      ${rows}
+      ${followUp}
+      <div style="margin-top:12px;font-size:11px;color:#8a7f73;font-style:italic;">
+        No message content is stored or shown. These are anonymous pattern counts only.
+      </div>
+    </div>
+  `;
+}
 
 const REASON_LABEL: Record<DeactivationRow["reasonCategory"], string> = {
   hard_bounce:  "Hard bounce",
@@ -191,6 +239,12 @@ export function buildFounderDigestHtml(options: FounderDigestEmailOptions): stri
         <tr><td style="padding:8px 28px 16px;">
           <h2 style="margin:0 0 10px;font-size:15px;color:#3a2e1e;font-family:Georgia,'Times New Roman',serif;">All deactivations in this window</h2>
           ${tableHtml(nonDonorRows)}
+        </td></tr>
+
+        <!-- Crisis safety signals -->
+        <tr><td style="padding:8px 28px 16px;">
+          <h2 style="margin:0 0 10px;font-size:15px;color:#3a2e1e;font-family:Georgia,'Times New Roman',serif;">Crisis Safety Signals (last 24h)</h2>
+          ${crisisSignalsHtml(summary.crisisSignals)}
         </td></tr>
 
         <!-- CTA -->

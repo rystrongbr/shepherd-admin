@@ -1,11 +1,12 @@
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, and, desc, sql, gte, isNull, or, like } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lt, isNull, or, like } from "drizzle-orm";
 import * as fs from "fs";
 import * as path from "path";
 import {
   churches, members, campaigns, sequences, activities, insights, affiliations, appUsers, chats,
   bibleTopicContent, sequenceEnrollments, emailEvents, donations, memberSignups, trafficSnapshots,
+  crisisSafetySignals,
   type Church, type InsertChurch,
   type Member, type InsertMember,
   type Campaign, type InsertCampaign,
@@ -20,6 +21,7 @@ import {
   type EmailEvent, type InsertEmailEvent,
   type MemberSignup, type InsertMemberSignup,
   type TrafficSnapshot, type InsertTrafficSnapshot,
+  type CrisisSafetySignal, type InsertCrisisSafetySignal,
 } from "@shared/schema";
 
 // DB_PATH allows the database file to live on a persistent volume in production.
@@ -259,6 +261,21 @@ sqlite.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_traffic_snapshots_lookup
     ON traffic_snapshots (source, metric, recorded_at DESC);
+
+  -- ─── Crisis safety signals (anonymous crisis-language interception log).
+  -- Stores ONLY category + optional user/session id + timestamp. NEVER the
+  -- message content. Powers the founder digest's anonymous pattern counts. ──
+  CREATE TABLE IF NOT EXISTS crisis_safety_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    session_id TEXT,
+    category TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_crisis_signals_created_at
+    ON crisis_safety_signals (created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_crisis_signals_category
+    ON crisis_safety_signals (category);
 `);
 
 // ─── Additive column migrations (email module) ───────────────────────────────
@@ -596,6 +613,18 @@ export interface IStorage {
   getLatestTrafficSnapshot(source: string, metric: string): TrafficSnapshot | undefined;
   /** Recent history (newest first) for a (source, metric) pair. */
   getTrafficHistory(source: string, metric: string, limit?: number): TrafficSnapshot[];
+
+  // ─── Crisis safety signals ─────────────────────────────────────────────
+  /**
+   * Append one crisis-language interception. Records ONLY category + optional
+   * user/session id + timestamp. The message content is never passed in here.
+   */
+  logCrisisSignal(data: InsertCrisisSafetySignal): CrisisSafetySignal;
+  /**
+   * Count crisis signals grouped by category in [fromIso, toIso). Used by the
+   * founder digest for the anonymous 24h rollup.
+   */
+  getCrisisSignalCounts(fromIso: string, toIso: string): { category: string; count: number }[];
 }
 
 export const storage: IStorage = {
@@ -1085,5 +1114,22 @@ export const storage: IStorage = {
       .where(and(eq(trafficSnapshots.source, source), eq(trafficSnapshots.metric, metric)))
       .orderBy(desc(trafficSnapshots.recordedAt))
       .limit(limit)
+      .all(),
+
+  // ─── Crisis safety signals ─────────────────────────────────────────────
+  logCrisisSignal: (data) =>
+    db.insert(crisisSafetySignals).values(data).returning().get(),
+
+  getCrisisSignalCounts: (fromIso, toIso) =>
+    db.select({
+        category: crisisSafetySignals.category,
+        count: sql<number>`count(*)`,
+      })
+      .from(crisisSafetySignals)
+      .where(and(
+        gte(crisisSafetySignals.createdAt, fromIso),
+        lt(crisisSafetySignals.createdAt, toIso),
+      ))
+      .groupBy(crisisSafetySignals.category)
       .all(),
 };
