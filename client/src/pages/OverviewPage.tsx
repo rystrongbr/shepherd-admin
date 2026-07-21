@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import UpdateUniqueUsersForm from "@/components/UpdateUniqueUsersForm";
 import { Users, Mail, TrendingUp, Calendar, Clock, UserPlus, Send, Globe } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import type { Activity, Campaign } from "@shared/schema";
@@ -148,6 +149,11 @@ export default function OverviewPage() {
               <div className="kpi-delta up">{kpi.sub}</div>
             </div>
           ))}
+        </div>
+
+        {/* Self-serve manual update for the Unique Users tile above. */}
+        <div style={{ marginTop: "-0.25rem" }}>
+          <UpdateUniqueUsersForm />
         </div>
 
         {/* Two-column layout */}
