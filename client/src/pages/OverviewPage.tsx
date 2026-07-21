@@ -68,7 +68,7 @@ export default function OverviewPage() {
   // API and inserts a fresh snapshot, so the latest row here is the most
   // recent reading. A snapshot older than STALE_AFTER_DAYS is flagged in the
   // subtitle so a stale reading is never presented as current.
-  const STALE_AFTER_DAYS = 3;
+  const STALE_AFTER_DAYS = 30;
   interface TrafficSnap { id: number; source: string; metric: string; value: number; recordedAt: string; note: string; }
   const { data: traffic, isLoading: trafficLoading } = useQuery<{ latest: TrafficSnap | null; prior: TrafficSnap | null }>({
     queryKey: ["/api/traffic/latest", "cloudflare", "uniques_30d"],
