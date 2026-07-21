@@ -102,7 +102,7 @@ to confirm in the SendGrid UI before the church is ready to send:
 1. **Sender Authentication** — Authenticate the sending domain
    (`guacapp.com` or per-church domain). Without this, deliverability is poor.
 2. **Verified Single Sender** — Verify the address in `church.sendgridFromEmail`
-   (e.g. `ryan+shepherd@guacapp.com`). The module's provisioning step looks up
+   (e.g. `ryan@myshepherdapp.church`). The module's provisioning step looks up
    this verified sender by email and stores its `senderId`; if the sender is
    not yet verified, provisioning will succeed but with a warning.
 3. **Event Webhook** — Settings → Mail Settings → Event Webhook → enable, set

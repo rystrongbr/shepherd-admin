@@ -554,7 +554,7 @@ export default function OnboardPage() {
       {/* Footer */}
       <p style={{ marginTop: "1.5rem", fontSize: "0.75rem", color: "#9a8a7a", textAlign: "center" }}>
         Questions? Email us at{" "}
-        <a href="mailto:ryan+shepherd@guacapp.com" style={{ color: "#7B4A1E" }}>ryan+shepherd@guacapp.com</a>
+        <a href="mailto:ryan@myshepherdapp.church" style={{ color: "#7B4A1E" }}>ryan@myshepherdapp.church</a>
       </p>
       <p style={{ marginTop: "0.5rem", fontSize: "0.7rem", color: "#b8a898" }}>
         <a href="https://www.perplexity.ai/computer" target="_blank" rel="noopener noreferrer" style={{ color: "#b8a898" }}>Created with Perplexity Computer</a>
