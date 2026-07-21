@@ -13,7 +13,7 @@ import { db, sqlite, runDemoSeed } from "./storage.js";
 import {
   churches, members, campaigns, sequences, activities, insights,
   affiliations, appUsers, chats, bibleTopicContent,
-  sequenceEnrollments, emailEvents,
+  sequenceEnrollments, emailEvents, curatedQuestions,
 } from "@shared/schema";
 
 export function resetDemoData(): {
@@ -28,6 +28,7 @@ export function resetDemoData(): {
   const tablesInOrder = [
     { name: "email_events",          table: emailEvents },
     { name: "sequence_enrollments",  table: sequenceEnrollments },
+    { name: "curated_questions",     table: curatedQuestions },
     { name: "chats",                 table: chats },
     { name: "insights",              table: insights },
     { name: "activities",            table: activities },

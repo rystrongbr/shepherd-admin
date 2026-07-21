@@ -1295,6 +1295,92 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ─── Discover — cross-church anonymized questions feed ────────────────────
+  // Auth: same admin bearer token as the rest of /api (requireAuth above). The
+  // dashboard has a single shared admin token today, so there is no per-admin
+  // identity to key curation on — all curation is stored under DISCOVER_ADMIN_ID.
+  // The curated_questions schema (admin_user_id + unique constraint) is already
+  // multi-admin ready; when per-admin auth lands, derive this from the session.
+  const DISCOVER_ADMIN_ID = "admin";
+  const DISCOVER_RANGES = new Set(["7d", "30d", "90d"]);
+  const DISCOVER_SORTS = new Set(["recent", "similar", "longest"]);
+
+  /**
+   * GET /api/discover/questions
+   * Category-balanced (default) or filtered/paginated anonymized feed of every
+   * question asked across My Shepherd. NEVER returns session_id, church_id,
+   * location, or any other identifying field — see storage.getDiscoverQuestions.
+   * Query: ?range=7d|30d|90d&category=&search=&sort=recent|similar|longest
+   *        &page=1&curated_only=false
+   */
+  app.get("/api/discover/questions", (req, res) => {
+    try {
+      const rangeRaw = String(req.query.range || "30d");
+      const range = (DISCOVER_RANGES.has(rangeRaw) ? rangeRaw : "30d") as "7d" | "30d" | "90d";
+      const sortRaw = String(req.query.sort || "recent");
+      const sort = (DISCOVER_SORTS.has(sortRaw) ? sortRaw : "recent") as "recent" | "similar" | "longest";
+      const category = req.query.category ? String(req.query.category) : undefined;
+      const search = req.query.search ? String(req.query.search) : undefined;
+      const pageRaw = req.query.page != null ? Number(req.query.page) : 1;
+      const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+      const curatedOnly = req.query.curated_only === "1" || req.query.curated_only === "true";
+
+      const result = storage.getDiscoverQuestions({
+        range, category, search, sort, page, curatedOnly, adminUserId: DISCOVER_ADMIN_ID,
+      });
+      res.json(result);
+    } catch (err: any) {
+      console.error("Discover questions error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/discover/curate  — body { question_id } — stars a question for
+   * the current admin. Idempotent (unique constraint makes re-star a no-op).
+   */
+  app.post("/api/discover/curate", (req, res) => {
+    try {
+      const parsed = z.object({ question_id: z.number().int().positive() }).safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "question_id (positive integer) is required" });
+      storage.addCuration(DISCOVER_ADMIN_ID, parsed.data.question_id);
+      res.json({ ok: true, question_id: parsed.data.question_id, curated: true });
+    } catch (err: any) {
+      console.error("Discover curate error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /api/discover/curate/:question_id — unstars a question for the
+   * current admin. Idempotent (deleting a non-curated row is a no-op).
+   */
+  app.delete("/api/discover/curate/:question_id", (req, res) => {
+    try {
+      const questionId = Number(req.params.question_id);
+      if (!Number.isInteger(questionId) || questionId <= 0) {
+        return res.status(400).json({ error: "question_id must be a positive integer" });
+      }
+      storage.removeCuration(DISCOVER_ADMIN_ID, questionId);
+      res.json({ ok: true, question_id: questionId, curated: false });
+    } catch (err: any) {
+      console.error("Discover uncurate error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/discover/curated — returns the current admin's curated question ids.
+   */
+  app.get("/api/discover/curated", (_req, res) => {
+    try {
+      res.json({ curated: storage.getCuratedQuestionIds(DISCOVER_ADMIN_ID) });
+    } catch (err: any) {
+      console.error("Discover curated error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   /**
    * POST /api/traffic/snapshot
    * Record one marketing-traffic data point. The agent calls this whenever the
