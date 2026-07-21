@@ -38,6 +38,7 @@ import {
 // move them into server/email/transactional.ts so this import goes away.
 import { sgSendMail } from "./email/sendgrid-client";
 import { registerDonationRoutes } from "./donations";
+import { refreshCloudflareTraffic } from "./traffic";
 import { registerChurchSignupRoute } from "./church-signup";
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
@@ -1435,6 +1436,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
     } catch (err: any) {
       console.error("Traffic latest error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/traffic/refresh
+   * Admin-only. Pull the Cloudflare 30-day unique-visitor count right now and,
+   * on success, write a fresh snapshot. Used to update the Overview tile on
+   * demand (e.g. before a demo) without waiting for the daily cron. Returns
+   * { ran:false, reason } when credentials are missing or the fetch failed.
+   */
+  app.post("/api/traffic/refresh", async (_req, res) => {
+    try {
+      const result = await refreshCloudflareTraffic();
+      res.json(result);
+    } catch (err: any) {
+      console.error("Traffic refresh error:", err);
       res.status(500).json({ error: err.message });
     }
   });

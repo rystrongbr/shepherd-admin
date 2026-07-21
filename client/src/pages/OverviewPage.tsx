@@ -63,9 +63,12 @@ export default function OverviewPage() {
 
   const upcomingCampaigns = campaigns?.filter(c => c.status === "scheduled").slice(0, 4) ?? [];
 
-  // Marketing Site — Cloudflare 30-day unique visitors. The agent POSTs new
-  // snapshots whenever the founder pastes a fresh Cloudflare number in chat,
-  // so the latest row here is always the most recent reading.
+  // Marketing Site — Cloudflare 30-day unique visitors. A daily server cron
+  // (server/traffic) pulls the number from the Cloudflare GraphQL Analytics
+  // API and inserts a fresh snapshot, so the latest row here is the most
+  // recent reading. A snapshot older than STALE_AFTER_DAYS is flagged in the
+  // subtitle so a stale reading is never presented as current.
+  const STALE_AFTER_DAYS = 30;
   interface TrafficSnap { id: number; source: string; metric: string; value: number; recordedAt: string; note: string; }
   const { data: traffic, isLoading: trafficLoading } = useQuery<{ latest: TrafficSnap | null; prior: TrafficSnap | null }>({
     queryKey: ["/api/traffic/latest", "cloudflare", "uniques_30d"],
@@ -73,13 +76,21 @@ export default function OverviewPage() {
   });
   const trafficLatest = traffic?.latest;
   const trafficPrior  = traffic?.prior;
-  const trafficValue  = trafficLoading ? "—" : (trafficLatest ? trafficLatest.value.toLocaleString() : "—");
+  const trafficAgeDays = trafficLatest
+    ? Math.floor((Date.now() - new Date(trafficLatest.recordedAt).getTime()) / (24 * 60 * 60 * 1000))
+    : 0;
+  const trafficStale  = !!trafficLatest && trafficAgeDays > STALE_AFTER_DAYS;
+  const trafficValue  = trafficLoading ? "—" : (trafficLatest ? trafficLatest.value.toLocaleString() : "N/A");
+  const trafficAsOf   = trafficLatest
+    ? new Date(trafficLatest.recordedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    : "";
+  const trafficDelta  = trafficLatest && trafficPrior
+    ? `${trafficLatest.value - trafficPrior.value >= 0 ? "+" : ""}${(trafficLatest.value - trafficPrior.value).toLocaleString()} vs prior · `
+    : "";
   const trafficSub    = trafficLoading
     ? "Loading…"
     : trafficLatest
-      ? (trafficPrior
-          ? `${trafficLatest.value - trafficPrior.value >= 0 ? "+" : ""}${(trafficLatest.value - trafficPrior.value).toLocaleString()} vs prior · as of ${new Date(trafficLatest.recordedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
-          : `as of ${new Date(trafficLatest.recordedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`)
+      ? `${trafficDelta}as of ${trafficAsOf}${trafficStale ? " (stale — refresh pending)" : ""}`
       : "No data yet";
 
   return (
@@ -121,7 +132,7 @@ export default function OverviewPage() {
               icon: <TrendingUp size={16} style={{ color: "hsl(var(--primary))" }} />,
             },
             {
-              label: "Marketing Site Uniques",
+              label: "Unique Users",
               value: trafficValue,
               sub: trafficSub,
               icon: <Globe size={16} style={{ color: "#01696F" }} />,
