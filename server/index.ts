@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { startEmailCrons } from "./email";
+import { startTrafficCron } from "./traffic";
 import { createServer } from "http";
 import path from "path";
 
@@ -103,6 +104,12 @@ app.use((req, res, next) => {
   // handler also means flipping the flag in Railway takes effect without a
   // redeploy.
   startEmailCrons();
+
+  // Start the marketing-traffic cron. Pulls the Cloudflare 30-day unique
+  // visitor count daily and writes a snapshot so the Overview "Unique Users"
+  // tile self-refreshes. The handler is a no-op when Cloudflare credentials
+  // are absent, so this is safe in every environment.
+  startTrafficCron();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
