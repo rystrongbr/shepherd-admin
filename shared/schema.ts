@@ -176,6 +176,10 @@ export const appUsers = sqliteTable("app_users", {
   // Optional 5-digit ZIP captured at Sign Up (for users who skip the
   // stay-connected modal). Nullable; never required.
   zipCode: text("zip_code"),
+  // Internal/test/dev/staff tag. When true, this user's questions are excluded
+  // from the cross-church Discover feed. Defaults to false — never flipped
+  // automatically. See server/routes.ts /api/discover/questions.
+  isTestUser: integer("is_test_user", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
   lastLoginAt: text("last_login_at").notNull().default(new Date().toISOString()),
 });
@@ -381,3 +385,20 @@ export const crisisSafetySignals = sqliteTable("crisis_safety_signals", {
 export const insertCrisisSafetySignalSchema = createInsertSchema(crisisSafetySignals).omit({ id: true });
 export type InsertCrisisSafetySignal = z.infer<typeof insertCrisisSafetySignalSchema>;
 export type CrisisSafetySignal = typeof crisisSafetySignals.$inferSelect;
+
+// ─── Discover — per-admin curation ───────────────────────────────────────────
+// Backs the "Discover" cross-church questions feed. Each row = one question an
+// admin has starred. Curation is PER-ADMIN, not global (Ryan's starred list is
+// independent of Pastor Smith's). questionId is a loose FK to insights.id (the
+// table that stores every question asked in My Shepherd). The unique constraint
+// on (admin_user_id, question_id) makes star/unstar idempotent.
+export const curatedQuestions = sqliteTable("curated_questions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  adminUserId: text("admin_user_id").notNull(),
+  questionId: integer("question_id").notNull(),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+
+export const insertCuratedQuestionSchema = createInsertSchema(curatedQuestions).omit({ id: true });
+export type InsertCuratedQuestion = z.infer<typeof insertCuratedQuestionSchema>;
+export type CuratedQuestion = typeof curatedQuestions.$inferSelect;

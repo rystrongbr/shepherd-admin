@@ -8,7 +8,7 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "test": "node --import tsx --test server/crisis/crisisSafety.test.ts",
+    "test": "node --import tsx --test server/**/*.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

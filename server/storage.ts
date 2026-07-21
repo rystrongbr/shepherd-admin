@@ -6,7 +6,7 @@ import * as path from "path";
 import {
   churches, members, campaigns, sequences, activities, insights, affiliations, appUsers, chats,
   bibleTopicContent, sequenceEnrollments, emailEvents, donations, memberSignups, trafficSnapshots,
-  crisisSafetySignals,
+  crisisSafetySignals, curatedQuestions,
   type Church, type InsertChurch,
   type Member, type InsertMember,
   type Campaign, type InsertCampaign,
@@ -276,6 +276,26 @@ sqlite.exec(`
     ON crisis_safety_signals (created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_crisis_signals_category
     ON crisis_safety_signals (category);
+
+  -- ─── Discover — per-admin curated questions. One row per (admin, question)
+  -- an admin has starred in the cross-church Discover feed. question_id is a
+  -- loose FK to insights.id. Unique (admin_user_id, question_id) makes the
+  -- star/unstar toggle idempotent. ──
+  CREATE TABLE IF NOT EXISTS curated_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_user_id TEXT NOT NULL,
+    question_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_curated_questions_admin_question
+    ON curated_questions (admin_user_id, question_id);
+
+  -- Discover feed read paths: recency range scans + category-balanced sampling
+  -- (ROW_NUMBER() OVER PARTITION BY topic ORDER BY created_at DESC).
+  CREATE INDEX IF NOT EXISTS idx_insights_created_at
+    ON insights (created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_insights_topic_created_at
+    ON insights (topic, created_at DESC);
 `);
 
 // ─── Additive column migrations (email module) ───────────────────────────────
@@ -309,6 +329,9 @@ addColumnIfMissing("app_users",      "home_church_name",   "TEXT");
 addColumnIfMissing("member_signups", "home_church_name",   "TEXT");
 // Optional ZIP captured at Sign Up (webapp launch feedback).
 addColumnIfMissing("app_users",      "zip_code",           "TEXT");
+// Discover feed — internal/test/dev/staff tag. Excludes a user's questions from
+// the cross-church Discover feed. Defaults false; never flipped automatically.
+addColumnIfMissing("app_users",      "is_test_user",       "INTEGER NOT NULL DEFAULT 0");
 // Q&A admin dashboard — capture verse + reflection for ALL traffic (anon +
 // signed-in) so the /questions page can show the full response, not just the
 // signed-in chats table. See shared/schema.ts insights table.
@@ -470,6 +493,46 @@ export interface QAQueryOpts {
   offset?: number;
 }
 
+// ─── Discover feed types ─────────────────────────────────────────────────────
+export type DiscoverRange = "7d" | "30d" | "90d";
+export type DiscoverSort = "recent" | "similar" | "longest";
+
+export interface DiscoverQueryOpts {
+  range?: DiscoverRange;   // default 30d
+  category?: string;       // insights.topic filter
+  search?: string;         // LIKE across question/topic/verse_ref
+  sort?: DiscoverSort;     // default recent
+  page?: number;           // 1-based; only used on filtered views
+  curatedOnly?: boolean;   // restrict to the current admin's starred rows
+  adminUserId: string;     // whose curation state to resolve
+}
+
+// A single anonymized Discover row. Deliberately omits session_id, church_id,
+// and location — nothing that could identify the asker leaves the server.
+export interface DiscoverQuestionRow {
+  id: number;
+  when: string;      // ISO createdAt
+  category: string;  // topic
+  question: string;
+  verseRef: string;
+  verseText: string;
+  reflection: string;
+  who: "anon";
+  curated: boolean;
+}
+
+export interface DiscoverResult {
+  questions: DiscoverQuestionRow[];
+  pagination: { page: number; total_pages: number; total_count: number };
+  category_mix: Record<string, number>;
+  stats: { total: number; unique_users: number; categories_covered: number; curated_count: number };
+}
+
+// Per-category sample size and hard page cap for the default balanced view.
+export const DISCOVER_PER_CATEGORY = 10;
+export const DISCOVER_MAX_DEFAULT = 100;
+export const DISCOVER_PAGE_SIZE = 25;
+
 export interface IStorage {
   // Churches
   getChurches(): Church[];
@@ -510,6 +573,12 @@ export interface IStorage {
   getTrendingQuestions(churchId?: number, limit?: number): Insight[];
   // Q&A admin dashboard — paged, filtered, searchable list + summary counts.
   getQA(opts: QAQueryOpts): { rows: Insight[]; total: number; questionTotal: number; signedInTotal: number; anonTotal: number };
+
+  // Discover — cross-church anonymized questions feed + per-admin curation.
+  getDiscoverQuestions(opts: DiscoverQueryOpts): DiscoverResult;
+  getCuratedQuestionIds(adminUserId: string): number[];
+  addCuration(adminUserId: string, questionId: number): void;
+  removeCuration(adminUserId: string, questionId: number): void;
 
   // Affiliations
   createAffiliation(data: InsertAffiliation): Affiliation;
@@ -772,6 +841,177 @@ export const storage: IStorage = {
       signedInTotal:  Number(signedInTotalRow?.c  ?? 0),
       anonTotal:      Number(anonTotalRow?.c      ?? 0),
     };
+  },
+
+  // ─── Discover feed ──────────────────────────────────────────────────────
+  // Cross-church, fully anonymized questions feed. Aggregates every question
+  // asked in My Shepherd (insights table) across all churches AND unaffiliated
+  // app users. Test/dev/staff users (app_users.is_test_user = 1) are excluded;
+  // everyone else — including Ryan — is included.
+  //
+  // Default view (no category / search / curated filter): a category-balanced
+  // sample of up to DISCOVER_PER_CATEGORY questions per category via a
+  // ROW_NUMBER() OVER (PARTITION BY topic ...) window, so no single popular
+  // category dominates the table. Any active filter switches to normal
+  // recency/relevance pagination at DISCOVER_PAGE_SIZE rows/page.
+  getDiscoverQuestions: (opts) => {
+    const days = opts.range === "7d" ? 7 : opts.range === "90d" ? 90 : 30;
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const adminUserId = opts.adminUserId;
+
+    // Base predicate shared by the feed and the aggregate stats. Bind params in
+    // the same order they appear. Test users are filtered via a correlated
+    // NOT IN against the synthesized "user-<id>" session ids.
+    const baseWhere =
+      `i.created_at >= ? ` +
+      `AND trim(i.question) <> '' ` +
+      `AND i.session_id NOT IN (SELECT 'user-' || id FROM app_users WHERE is_test_user = 1)`;
+    const baseParams: any[] = [since];
+
+    // Curated set for this admin (used for the `curated` flag + curated_only filter).
+    const curatedIds = new Set<number>(
+      (sqlite.prepare(`SELECT question_id FROM curated_questions WHERE admin_user_id = ?`).all(adminUserId) as any[])
+        .map(r => Number(r.question_id)),
+    );
+
+    const hasCategory = !!(opts.category && opts.category.trim());
+    const hasSearch = !!(opts.search && opts.search.trim());
+    const curatedOnly = !!opts.curatedOnly;
+    const filtered = hasCategory || hasSearch || curatedOnly;
+
+    // Build the filtered WHERE (category / search / curated_only) on top of base.
+    const filterClauses: string[] = [baseWhere];
+    const filterParams: any[] = [...baseParams];
+    if (hasCategory) {
+      filterClauses.push(`i.topic = ?`);
+      filterParams.push(opts.category!.trim());
+    }
+    if (hasSearch) {
+      const s = `%${opts.search!.trim().replace(/[%_\\]/g, m => "\\" + m)}%`;
+      filterClauses.push(`(i.question LIKE ? ESCAPE '\\' OR i.topic LIKE ? ESCAPE '\\' OR i.verse_ref LIKE ? ESCAPE '\\')`);
+      filterParams.push(s, s, s);
+    }
+    if (curatedOnly) {
+      // No curated rows → guaranteed-empty predicate keeps the query simple.
+      if (curatedIds.size === 0) {
+        filterClauses.push(`1 = 0`);
+      } else {
+        const placeholders = Array.from(curatedIds).map(() => "?").join(", ");
+        filterClauses.push(`i.id IN (${placeholders})`);
+        filterParams.push(...Array.from(curatedIds));
+      }
+    }
+    const filteredWhere = filterClauses.join(" AND ");
+
+    let rawRows: any[];
+    let totalCount: number;
+    let page = 1;
+    let totalPages = 1;
+
+    if (!filtered) {
+      // Default: category-balanced sample via window function.
+      rawRows = sqlite.prepare(
+        `SELECT id, topic, question, verse_ref, verse_text, reflection, created_at FROM (
+           SELECT i.*,
+             ROW_NUMBER() OVER (PARTITION BY i.topic ORDER BY i.created_at DESC, i.id DESC) AS rn
+           FROM insights i
+           WHERE ${baseWhere}
+         )
+         WHERE rn <= ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`,
+      ).all(...baseParams, DISCOVER_PER_CATEGORY, DISCOVER_MAX_DEFAULT) as any[];
+      totalCount = rawRows.length;
+    } else {
+      // Filtered: normal pagination with the requested sort.
+      page = Math.max(1, opts.page ?? 1);
+      const offset = (page - 1) * DISCOVER_PAGE_SIZE;
+      const orderBy =
+        opts.sort === "similar" ? `cluster_size DESC, created_at DESC, id DESC` :
+        opts.sort === "longest" ? `resp_len DESC, created_at DESC, id DESC` :
+        `created_at DESC, id DESC`;
+
+      rawRows = sqlite.prepare(
+        `SELECT id, topic, question, verse_ref, verse_text, reflection, created_at FROM (
+           SELECT i.*,
+             COUNT(*) OVER (PARTITION BY lower(trim(i.question))) AS cluster_size,
+             length(i.reflection) AS resp_len
+           FROM insights i
+           WHERE ${filteredWhere}
+         )
+         ORDER BY ${orderBy}
+         LIMIT ? OFFSET ?`,
+      ).all(...filterParams, DISCOVER_PAGE_SIZE, offset) as any[];
+
+      const countRow = sqlite.prepare(
+        `SELECT count(*) AS c FROM insights i WHERE ${filteredWhere}`,
+      ).get(...filterParams) as any;
+      totalCount = Number(countRow?.c ?? 0);
+      totalPages = Math.max(1, Math.ceil(totalCount / DISCOVER_PAGE_SIZE));
+    }
+
+    const questions: DiscoverQuestionRow[] = rawRows.map(r => ({
+      id: Number(r.id),
+      when: String(r.created_at),
+      category: String(r.topic),
+      question: String(r.question),
+      verseRef: String(r.verse_ref ?? ""),
+      verseText: String(r.verse_text ?? ""),
+      reflection: String(r.reflection ?? ""),
+      who: "anon" as const,
+      curated: curatedIds.has(Number(r.id)),
+    }));
+
+    // Aggregate stats + category mix over the full date range (base filters
+    // only — independent of the table's category/search/curated filters).
+    const statsRow = sqlite.prepare(
+      `SELECT count(*) AS total,
+              count(DISTINCT i.session_id) AS unique_users,
+              count(DISTINCT i.topic) AS categories_covered
+       FROM insights i WHERE ${baseWhere}`,
+    ).get(...baseParams) as any;
+
+    const mixRows = sqlite.prepare(
+      `SELECT i.topic AS topic, count(*) AS c
+       FROM insights i WHERE ${baseWhere}
+       GROUP BY i.topic ORDER BY c DESC`,
+    ).all(...baseParams) as any[];
+    const category_mix: Record<string, number> = {};
+    for (const m of mixRows) category_mix[String(m.topic)] = Number(m.c);
+
+    return {
+      questions,
+      pagination: { page, total_pages: totalPages, total_count: totalCount },
+      category_mix,
+      stats: {
+        total: Number(statsRow?.total ?? 0),
+        unique_users: Number(statsRow?.unique_users ?? 0),
+        categories_covered: Number(statsRow?.categories_covered ?? 0),
+        curated_count: curatedIds.size,
+      },
+    };
+  },
+
+  getCuratedQuestionIds: (adminUserId) =>
+    db.select({ questionId: curatedQuestions.questionId })
+      .from(curatedQuestions)
+      .where(eq(curatedQuestions.adminUserId, adminUserId))
+      .all()
+      .map(r => r.questionId),
+
+  addCuration: (adminUserId, questionId) => {
+    // Idempotent: the unique index on (admin_user_id, question_id) makes a
+    // duplicate star a no-op rather than an error.
+    sqlite.prepare(
+      `INSERT OR IGNORE INTO curated_questions (admin_user_id, question_id, created_at)
+       VALUES (?, ?, ?)`,
+    ).run(adminUserId, questionId, new Date().toISOString());
+  },
+
+  removeCuration: (adminUserId, questionId) => {
+    db.delete(curatedQuestions)
+      .where(and(eq(curatedQuestions.adminUserId, adminUserId), eq(curatedQuestions.questionId, questionId)))
+      .run();
   },
 
   getTrendingQuestions: (churchId, limit = 10) => {
