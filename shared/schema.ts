@@ -88,6 +88,7 @@ export const campaigns = sqliteTable("campaigns", {
   opens: integer("opens").notNull().default(0),
   clicks: integer("clicks").notNull().default(0),
   bibleTopicTag: text("bible_topic_tag").notNull().default(""), // links to My Shepherd topics
+  meta: text("meta").notNull().default("{}"),
 });
 
 export const insertCampaignSchema = createInsertSchema(campaigns).omit({ id: true });
@@ -180,6 +181,9 @@ export const appUsers = sqliteTable("app_users", {
   // from the cross-church Discover feed. Defaults to false — never flipped
   // automatically. See server/routes.ts /api/discover/questions.
   isTestUser: integer("is_test_user", { mode: "boolean" }).notNull().default(false),
+  // Entitlement is deliberately a server-owned value. Stripe subscription
+  // wiring is a later workstream; callers never choose this field.
+  tier: text("tier").notNull().default("free"), // free | plus | enterprise
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
   lastLoginAt: text("last_login_at").notNull().default(new Date().toISOString()),
 });
