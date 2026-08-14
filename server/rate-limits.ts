@@ -47,7 +47,7 @@ export function authenticatedQuestionQuota(req: Request, res: Response, next: Ne
   if (!req.user) return next();
   if (process.env.RATE_LIMIT_BYPASS === "true") return next();
   ensureQuotaTables();
-  const max = req.user.tier === "enterprise" ? 100 : req.user.tier === "plus" ? 50 : 3;
+  const max = req.user.tier === "enterprise" ? 25 : req.user.tier === "plus" ? 20 : 3;
   const date = localDate(req);
   const current = db.get<{ count: number }>(sql`
     SELECT count FROM daily_question_counts WHERE user_id = ${req.user.id} AND date = ${date}

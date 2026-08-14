@@ -19,8 +19,8 @@ and `email_verified` claim are verified using Google JWKS before account linking
 | --- | ---: |
 | Anonymous IP | 3/day |
 | Signed-in free user | 3/day |
-| My Shepherd+ | 50/day |
-| Enterprise | 100/day |
+| My Shepherd+ | 20/day |
+| Enterprise | 25/day |
 
 Anonymous requests use `express-rate-limit`; signed-in requests use
 `daily_question_counts`, keyed by the user's declared IANA timezone date (UTC
