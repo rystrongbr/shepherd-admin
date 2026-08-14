@@ -9,6 +9,7 @@ interface LoginPageProps {
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw,   setShowPw]   = useState(false);
   const [loading,  setLoading]  = useState(false);
@@ -22,11 +23,12 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        credentials: "include",
+        body: JSON.stringify({ email, password }),
       });
       if (res.ok) {
         const data = await res.json();
-        onLogin(data.token);
+        onLogin(data.accessToken);
       } else {
         toast({ title: "Incorrect password", description: "Please try again.", variant: "destructive" });
         setPassword("");
@@ -82,7 +84,20 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <div>
             <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: "6px", letterSpacing: "0.03em" }}>
-              Admin Password
+              Admin Email
+            </label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              autoComplete="email"
+              data-testid="input-email"
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "hsl(var(--muted-foreground))", display: "block", marginBottom: "6px", letterSpacing: "0.03em" }}>
+              Password
             </label>
             <div style={{ position: "relative" }}>
               <Input
@@ -110,7 +125,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
           <Button
             type="submit"
-            disabled={!password.trim() || loading}
+            disabled={!email.trim() || !password.trim() || loading}
             data-testid="button-login"
             style={{ width: "100%", background: "hsl(var(--primary))", color: "#fff", height: "40px" }}
           >

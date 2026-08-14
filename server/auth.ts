@@ -119,10 +119,12 @@ function sendTokens(res: Response, accessToken: string, refreshToken: string, ki
 }
 
 export function issueUserTokens(res: Response, user: UserClaims) {
+  ensureAuthTables();
   return sendTokens(res, userAccessToken(user), createRefresh("user", user.id), "user");
 }
 
 export function issueAdminTokens(res: Response, admin: AdminClaims) {
+  ensureAuthTables();
   return sendTokens(res, adminAccessToken(admin), createRefresh("admin", admin.id), "admin");
 }
 
@@ -224,6 +226,7 @@ export function findAdminById(id: number): AdminClaims | undefined {
 }
 
 export function createAdmin(email: string, password: string, role = "admin"): AdminClaims {
+  ensureAuthTables();
   if (password.length < 14) throw new Error("Admin passwords must be at least 14 characters");
   const normalized = email.trim().toLowerCase();
   const passwordHash = bcrypt.hashSync(password, 12);

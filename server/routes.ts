@@ -44,7 +44,7 @@ import { refreshCloudflareTraffic } from "./traffic";
 import { registerChurchSignupRoute } from "./church-signup";
 import {
   attachUserIfPresent, createAdmin, findAdminByEmail, findAdminById, issueAdminTokens,
-  issueUserTokens, refreshTokens, requireAdmin, requireUser, seedInitialAdmin,
+  issueUserTokens, refreshTokens, requireAdmin, requireUser,
   verifyGoogleIdToken,
 } from "./auth";
 import { anonymousQuestionLimiter, authenticatedQuestionQuota, queueAnthropic } from "./rate-limits";
@@ -96,7 +96,6 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
-  seedInitialAdmin();
   app.use("/api", attachUserIfPresent);
   // Apply auth middleware to all /api routes
   app.use("/api", requireAuth);

@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { rateLimit } from "express-rate-limit";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { sql } from "drizzle-orm";
 import { db } from "./storage";
 
@@ -12,7 +12,7 @@ export const anonymousQuestionLimiter = rateLimit({
   limit: anonymousLimit,
   standardHeaders: "draft-8",
   legacyHeaders: false,
-  keyGenerator: req => req.ip || "unknown",
+  keyGenerator: req => ipKeyGenerator(req.ip || "127.0.0.1"),
   skip: req => Boolean(req.user),
   handler: (_req, res) => res.status(429).json({ error: "Daily question limit reached. Please come back tomorrow." }),
 });
