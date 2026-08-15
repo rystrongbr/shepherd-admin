@@ -747,6 +747,39 @@ function showInlineToast(message) {
   }, 4000);
 }
 
+// Full-page fallback shown when a phone user tapped the magic link but the
+// native app isn't installed (or the OS didn't route the custom scheme).
+// The token is still valid for the remaining ~15 min TTL, so we give them
+// both an "Open in app" retry AND a plain "Continue in browser" link that
+// verifies the token here on the web — nothing gets stranded.
+function showMobileMagicLinkFallback(rawToken) {
+  // Only render once, even if called multiple times.
+  if (document.getElementById("mobile-magic-fallback")) return;
+
+  const appUrl = `myshepherd://verify?token=${encodeURIComponent(rawToken)}`;
+  const webUrl = `${window.location.pathname}#?magic=${encodeURIComponent(rawToken)}&web=1`;
+
+  const overlay = document.createElement("div");
+  overlay.id = "mobile-magic-fallback";
+  overlay.style.cssText =
+    "position:fixed;inset:0;background:#F4EFE6;z-index:9999;display:flex;flex-direction:column;" +
+    "align-items:center;justify-content:center;padding:32px;font-family:Georgia,serif;text-align:center;";
+  overlay.innerHTML = `
+    <h2 style="color:#5A3210;margin:0 0 12px;font-size:1.6rem;">Open My Shepherd</h2>
+    <p style="color:#7A6A5A;max-width:320px;line-height:1.5;margin:0 0 24px;font-size:0.98rem;">
+      If the app didn't open automatically, tap below. This sign-in link is
+      valid for 15 minutes.
+    </p>
+    <a href="${appUrl}" style="display:inline-block;background:#7B4A1E;color:#fff;padding:14px 28px;
+       border-radius:8px;text-decoration:none;font-family:Arial,sans-serif;font-weight:600;font-size:1rem;
+       margin-bottom:16px;min-width:220px;">Open in the app</a>
+    <a href="${webUrl}" style="color:#7B4A1E;text-decoration:underline;font-family:Arial,sans-serif;font-size:0.9rem;">
+      Continue in this browser instead
+    </a>
+  `;
+  document.body.appendChild(overlay);
+}
+
 function handleNextQuestion() {
   // Reset all state
   isLoading = false;
@@ -1549,8 +1582,45 @@ function setHashParam(key, value) {
   window.history.replaceState(null, "", window.location.pathname + window.location.search + newHash);
 }
 
+// Match mobile browsers so we can hand magic-link tokens to the native app
+// instead of consuming them on the web. Ignores tablets (iPad Safari reports
+// as "Macintosh" in modern iPadOS) — the current native app targets phones.
+function isPhoneUserAgent() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  // iPhone or iPod (never iPad — we ship iPhone-first for MVP)
+  if (/iPhone|iPod/i.test(ua)) return true;
+  // Android phones. "Mobile" in UA distinguishes phone from tablet.
+  if (/Android/i.test(ua) && /Mobile/i.test(ua)) return true;
+  return false;
+}
+
 async function initAuth() {
   const params = parseHashParams();
+
+  // Mobile magic-link handoff: if the user tapped the magic link on a phone,
+  // deep-link the token into the native app instead of verifying it here.
+  // The web verify endpoint consumes the token on success, so we MUST NOT
+  // fetch it before the deep-link redirect. `?web=1` (or `&web=1`) is the
+  // escape hatch our fallback UI uses to continue in the browser instead.
+  if (params.magic && isPhoneUserAgent() && !params.web) {
+    // Preserve the raw token to hand to the app.
+    const rawToken = params.magic;
+    // Strip the token from the web URL so a browser back-nav won't retry it.
+    setHashParam("magic", null);
+    // Replace location with the custom scheme. If the app is installed, the
+    // OS opens it and this page unloads. If not, nothing happens visibly and
+    // we fall through to a visible "Open in app / Install" panel.
+    const appUrl = `myshepherd://verify?token=${encodeURIComponent(rawToken)}`;
+    window.location.href = appUrl;
+    // If the app isn't installed the OS silently swallows the scheme; give
+    // the user a fallback UI after a beat so they aren't stuck on a blank
+    // page holding a now-used-but-still-valid-for-15min token.
+    setTimeout(() => {
+      try { showMobileMagicLinkFallback(rawToken); } catch { /* no-op */ }
+    }, 1200);
+    return;
+  }
 
   if (params.magic) {
     try {
