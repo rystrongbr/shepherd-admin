@@ -362,10 +362,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * GET /api/ai/deeper?topic=Anxiety&question=...&prevRef=Philippians+4:6
    * Returns a deeper, different scripture on the same topic.
    */
-  app.get("/api/ai/deeper", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, async (req, res) => {
-    const topic    = String(req.query.topic    || "").trim();
-    const question = String(req.query.question || "").trim();
-    const prevRef  = String(req.query.prevRef  || "").trim();
+  const aiDeeperHandler = async (req: Request, res: Response) => {
+    // Prefer request body (POST from mobile / non-browser clients); fall back
+    // to query string so the existing web app (which fires GETs) keeps working.
+    const src: any = req.body && Object.keys(req.body).length ? req.body : req.query;
+    const topic    = String(src.topic    || "").trim();
+    const question = String(src.question || "").trim();
+    const prevRef  = String(src.prevRef  || "").trim();
     if (!topic) return res.status(400).json({ error: "topic is required" });
     try {
       const result = await queueAnthropic(res, () => getDeeperResponse(topic, question, prevRef));
@@ -375,7 +378,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       console.error("AI deeper error:", err.message);
       res.status(500).json({ error: "AI response failed", detail: err.message });
     }
-  });
+  };
+  app.get ("/api/ai/deeper", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, aiDeeperHandler);
+  app.post("/api/ai/deeper", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, aiDeeperHandler);
 
   // ─── AI v2 (Sonnet, question-led, multi-citation) ───────────────────────
   // These endpoints power the Stage A upgrade to Product 1. The legacy
@@ -388,9 +393,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * topicHint is optional and treated as soft context only — the question
    * is the primary signal.
    */
-  app.get("/api/ai/ask", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, async (req, res) => {
-    const question  = String(req.query.question  || "").trim();
-    const topicHint = String(req.query.topicHint || "").trim();
+  const aiAskHandler = async (req: Request, res: Response) => {
+    const src: any = req.body && Object.keys(req.body).length ? req.body : req.query;
+    const question  = String(src.question  || "").trim();
+    const topicHint = String(src.topicHint || "").trim();
     if (!question) return res.status(400).json({ error: "question is required" });
     if (!isV2Configured()) {
       return res.status(503).json({ error: "AI v2 not configured", detail: "ANTHROPIC_API_KEY is not set" });
@@ -403,16 +409,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       console.error("AI v2 ask error:", err.message);
       res.status(500).json({ error: "AI response failed", detail: err.message });
     }
-  });
+  };
+  app.get ("/api/ai/ask", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, aiAskHandler);
+  app.post("/api/ai/ask", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, aiAskHandler);
 
   /**
    * GET /api/ai/passage?originalQuestion=...&passageRef=Philippians+4:6
    * Drill-down: focused answer on a specific cited passage, in the
    * context of the user's original question.
    */
-  app.get("/api/ai/passage", anonymousQuestionLimiter, authenticatedQuestionQuota, async (req, res) => {
-    const originalQuestion = String(req.query.originalQuestion || "").trim();
-    const passageRef       = String(req.query.passageRef       || "").trim();
+  const aiPassageHandler = async (req: Request, res: Response) => {
+    const src: any = req.body && Object.keys(req.body).length ? req.body : req.query;
+    const originalQuestion = String(src.originalQuestion || "").trim();
+    const passageRef       = String(src.passageRef       || "").trim();
     if (!originalQuestion || !passageRef) {
       return res.status(400).json({ error: "originalQuestion and passageRef are required" });
     }
@@ -427,7 +436,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       console.error("AI v2 passage error:", err.message);
       res.status(500).json({ error: "AI response failed", detail: err.message });
     }
-  });
+  };
+  app.get ("/api/ai/passage", anonymousQuestionLimiter, authenticatedQuestionQuota, aiPassageHandler);
+  app.post("/api/ai/passage", anonymousQuestionLimiter, authenticatedQuestionQuota, aiPassageHandler);
 
   // ─── Church Onboarding ─────────────────────────────────────────────────────
 
