@@ -10,6 +10,23 @@ import helmet from "helmet";
 const app = express();
 const httpServer = createServer(app);
 app.disable("x-powered-by");
+
+// ─── /api/v1 shim ───────────────────────────────────────────────────────────
+// Mobile clients call /api/v1/*. Web clients keep calling /api/*.
+// We rewrite the URL before ANY other middleware runs so downstream code is
+// v1-unaware and the two paths are 100% behaviourally identical. The single
+// observable difference is the `X-API-Version` response header ("v1" when the
+// request came in on the versioned path, absent otherwise) — useful for future
+// deprecation of the unversioned aliases.
+app.use((req, res, next) => {
+  if (req.url.startsWith("/api/v1/") || req.url === "/api/v1") {
+    // Strip the /v1 segment; /api/v1/user/me → /api/user/me
+    req.url = req.url.replace(/^\/api\/v1(\/|$)/, "/api$1");
+    res.setHeader("X-API-Version", "v1");
+  }
+  next();
+});
+
 app.use(helmet({
   hsts: { maxAge: 31_536_000, includeSubDomains: true, preload: true },
   contentSecurityPolicy: {
