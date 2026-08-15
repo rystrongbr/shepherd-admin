@@ -332,6 +332,8 @@ addColumnIfMissing("app_users",      "zip_code",           "TEXT");
 // Discover feed — internal/test/dev/staff tag. Excludes a user's questions from
 // the cross-church Discover feed. Defaults false; never flipped automatically.
 addColumnIfMissing("app_users",      "is_test_user",       "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("app_users",      "tier",               "TEXT NOT NULL DEFAULT 'free'");
+addColumnIfMissing("campaigns",      "meta",               "TEXT NOT NULL DEFAULT '{}'");
 // Q&A admin dashboard — capture verse + reflection for ALL traffic (anon +
 // signed-in) so the /questions page can show the full response, not just the
 // signed-in chats table. See shared/schema.ts insights table.

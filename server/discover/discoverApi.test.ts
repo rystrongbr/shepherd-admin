@@ -5,11 +5,11 @@
  * the four new endpoints over HTTP, so the admin auth guard, request parsing,
  * response shape, and anonymization are all validated at the boundary.
  *
- * DB_PATH + ADMIN_PASSWORD are set before importing storage/routes.
+ * DB_PATH + JWT_SECRET are set before importing storage/routes.
  */
 
 process.env.DB_PATH = ":memory:";
-process.env.ADMIN_PASSWORD = "test-token";
+process.env.JWT_SECRET = "01234567890123456789012345678901";
 process.env.NODE_ENV = "test";
 // routes.ts eagerly imports ai.ts, which constructs SDK clients at module load.
 // Provide dummy keys so the constructors don't throw — no network calls are
@@ -22,12 +22,17 @@ import assert from "node:assert/strict";
 import express from "express";
 import { createServer, type Server } from "node:http";
 import { AddressInfo } from "node:net";
+import jwt from "jsonwebtoken";
 // Dynamic imports so DB_PATH / ADMIN_PASSWORD / dummy SDK keys above are all
 // in place before storage.ts opens the DB and routes.ts constructs its clients.
 const { registerRoutes } = await import("../routes.ts");
 const { sqlite } = await import("../storage.ts");
 
-const TOKEN = "test-token";
+const TOKEN = jwt.sign(
+  { kind: "admin", id: 1, email: "ryan@myshepherdapp.church", role: "owner" },
+  process.env.JWT_SECRET!,
+  { expiresIn: "15m" },
+);
 let baseUrl = "";
 let server: Server;
 

@@ -13,13 +13,15 @@ import * as data from "./data";
 import * as stripeClient from "./stripe-client";
 import { checkEligibility } from "./eligibility";
 import { DONATION_AMOUNTS_CENTS, MIN_CUSTOM_AMOUNT_CENTS, MAX_CUSTOM_AMOUNT_CENTS } from "./stripe-client";
+import { requireUser } from "../auth";
+import { db } from "../storage";
+import { chats } from "@shared/schema";
+import { and, eq } from "drizzle-orm";
 
 export function registerDonationRoutes(app: Express) {
   // ─── Eligibility check ─────────────────────────────────────────────────────
-  app.get("/api/donations/eligibility", (req: Request, res: Response) => {
-    const userId = Number(req.query.userId);
-    if (!userId) return res.status(400).json({ error: "userId required" });
-    const result = checkEligibility(userId);
+  app.get("/api/donations/eligibility", requireUser, (req: Request, res: Response) => {
+    const result = checkEligibility(req.user!.id);
     res.json(result);
   });
 
@@ -35,9 +37,8 @@ export function registerDonationRoutes(app: Express) {
   });
 
   // ─── Log that we showed a prompt to a user ─────────────────────────────────
-  app.post("/api/donations/prompt/log", (req: Request, res: Response) => {
-    const { userId, trigger } = req.body;
-    if (!userId) return res.status(400).json({ error: "userId required" });
+  app.post("/api/donations/prompt/log", requireUser, (req: Request, res: Response) => {
+    const { trigger } = req.body;
     // Must match the trigger strings the client sends to showDonationModal()
     // (app.js): unrecognized values fall back to "manual_button", which silently
     // mis-attributes the analytics. Keep this list in sync with app.js.
@@ -51,29 +52,32 @@ export function registerDonationRoutes(app: Express) {
       "long_chat",
     ];
     const t = allowedTriggers.includes(trigger) ? trigger : "manual_button";
-    const prompt = data.logPrompt({ userId, trigger: t, outcome: "shown" });
+    const prompt = data.logPrompt({ userId: req.user!.id, trigger: t, outcome: "shown" });
     res.json({ ok: true, promptId: prompt.id });
   });
 
   // ─── Record an outcome (dismiss / maybe_later / opt_out / donated) ─────────
-  app.post("/api/donations/prompt/:id/outcome", (req: Request, res: Response) => {
+  app.post("/api/donations/prompt/:id/outcome", requireUser, (req: Request, res: Response) => {
     const id = Number(req.params.id);
     const { outcome } = req.body;
     const allowed = ["dismissed", "maybe_later", "opt_out", "donated"];
     if (!allowed.includes(outcome)) {
       return res.status(400).json({ error: `outcome must be one of ${allowed.join(", ")}` });
     }
+    if (!data.getUserPrompts(req.user!.id, 100).some(prompt => prompt.id === id)) {
+      return res.status(404).json({ error: "Donation prompt not found" });
+    }
     data.updatePromptOutcome(id, outcome);
     res.json({ ok: true });
   });
 
   // ─── Create a Stripe Checkout session ──────────────────────────────────────
-  app.post("/api/donations/checkout", async (req: Request, res: Response) => {
+  app.post("/api/donations/checkout", requireUser, async (req: Request, res: Response) => {
     if (!stripeClient.isConfigured()) {
       return res.status(503).json({ error: "Donations are not configured on this server" });
     }
 
-    const { userId, promptId, amountCents, email, origin } = req.body;
+    const { promptId, amountCents } = req.body;
     const amt = Number(amountCents);
     if (!amt || amt < MIN_CUSTOM_AMOUNT_CENTS || amt > MAX_CUSTOM_AMOUNT_CENTS) {
       return res.status(400).json({
@@ -81,28 +85,30 @@ export function registerDonationRoutes(app: Express) {
       });
     }
 
-    // Build success/cancel URLs from the request origin so this works on demo,
-    // staging, and production without a hardcoded domain.
-    const baseUrl = origin
-      || (req.headers.origin as string)
-      || (req.headers.referer ? new URL(req.headers.referer as string).origin : "")
-      || process.env.APP_URL
-      || "https://app.myshepherdapp.church";
+    // Body/header origins are never trusted. The return location is a
+    // deployment-controlled allowlist entry only.
+    const configuredOrigin = process.env.DONATION_CHECKOUT_ORIGIN || "https://app.myshepherdapp.church";
+    const baseUrl = ["https://myshepherdapp.church", "https://app.myshepherdapp.church"].includes(configuredOrigin)
+      ? configuredOrigin
+      : "https://app.myshepherdapp.church";
+    if (promptId && !data.getUserPrompts(req.user!.id, 100).some(prompt => prompt.id === Number(promptId))) {
+      return res.status(404).json({ error: "Donation prompt not found" });
+    }
 
     try {
       const session = await stripeClient.createCheckoutSession({
         amountCents: amt,
-        userId: userId ? Number(userId) : undefined,
+        userId: req.user!.id,
         promptId: promptId ? Number(promptId) : undefined,
-        email,
+        email: req.user!.email,
         successUrl: `${baseUrl}/?donation=success&sid={CHECKOUT_SESSION_ID}`,
         cancelUrl: `${baseUrl}/?donation=cancel`,
       });
 
       // Persist the pending donation immediately so the webhook can update it.
       data.createDonation({
-        userId: userId ? Number(userId) : null,
-        email: email || "",
+        userId: req.user!.id,
+        email: req.user!.email,
         stripeSessionId: session.id,
         stripePaymentIntentId: "",
         amountCents: amt,
@@ -166,20 +172,22 @@ export function registerDonationRoutes(app: Express) {
   });
 
   // ─── Chat reaction (the value-moment signal) ───────────────────────────────
-  app.post("/api/chats/:id/reaction", (req: Request, res: Response) => {
+  app.post("/api/chats/:id/reaction", requireUser, (req: Request, res: Response) => {
     const chatId = Number(req.params.id);
-    const { userId, reaction } = req.body;
-    if (!userId) return res.status(400).json({ error: "userId required" });
+    const { reaction } = req.body;
     if (!["helped", "not_helpful"].includes(reaction)) {
       return res.status(400).json({ error: "reaction must be 'helped' or 'not_helpful'" });
     }
-    const existing = data.getReactionForChat(Number(userId), chatId);
+    const ownedChat = db.select({ id: chats.id }).from(chats)
+      .where(and(eq(chats.id, chatId), eq(chats.userId, req.user!.id))).get();
+    if (!ownedChat) return res.status(404).json({ error: "Chat not found" });
+    const existing = data.getReactionForChat(req.user!.id, chatId);
     if (existing) {
       // Idempotent: ignore double-clicks
       return res.json({ ok: true, reactionId: existing.id, alreadyRecorded: true });
     }
     const r = data.recordReaction({
-      userId: Number(userId),
+      userId: req.user!.id,
       chatId,
       reaction,
     });

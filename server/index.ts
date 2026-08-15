@@ -5,13 +5,53 @@ import { startEmailCrons } from "./email";
 import { startTrafficCron } from "./traffic";
 import { createServer } from "http";
 import path from "path";
+import helmet from "helmet";
 
 const app = express();
 const httpServer = createServer(app);
+app.disable("x-powered-by");
+app.use(helmet({
+  hsts: { maxAge: 31_536_000, includeSubDomains: true, preload: true },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://posthog.com", "https://*.posthog.com", "https://cdnjs.cloudflare.com"],
+      styleSrc: ["'self'"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'", "https://api.myshepherdapp.church", "https://posthog.com", "https://*.posthog.com", "https://api.anthropic.com"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+    },
+  },
+  referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+  frameguard: { action: "deny" },
+  noSniff: true,
+}));
+app.use((_req, res, next) => {
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
 
-// Allow cross-origin requests from the My Shepherd app (deployed on same S3/Perplexity infra)
+const productionOrigins = new Set([
+  "https://myshepherdapp.church",
+  "https://app.myshepherdapp.church",
+  "https://admin.myshepherdapp.church",
+]);
+const developmentOrigins = new Set(["http://localhost:3000", "http://localhost:5173"]);
+
+// CORS is intentionally restricted to first-party browser applications. Native
+// apps do not send Origin and are served through bearer authentication instead.
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.header("origin");
+  const allowed = new Set(productionOrigins);
+  if (process.env.NODE_ENV !== "production") developmentOrigins.forEach(value => allowed.add(value));
+  if (origin && !allowed.has(origin)) return res.status(403).json({ error: "Origin is not allowed" });
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
   if (req.method === "OPTIONS") return res.status(204).end();
@@ -72,23 +112,11 @@ export function log(message: string, source = "express") {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
 
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
+      log(`${req.method} ${path} ${res.statusCode} in ${duration}ms`);
     }
   });
 

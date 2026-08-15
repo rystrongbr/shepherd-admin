@@ -89,8 +89,8 @@ function saveChatToHistory(topic, question, verseOrCitation, reflectionOrAnswer)
     fetch(`${API_BASE}/api/chats`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({
-        userId: currentUser.id,
         topic: topic || "General",
         question: question || "",
         verseRef,
@@ -143,9 +143,8 @@ let v2LastQuestion  = null;
 let v2LastResponse  = null;  // shape: { answer, citations: [...], followUps: [...] }
 
 // ── Auth + engagement state (donations v1) ─────────────────────────────────
-// currentUser: { id, email, name, churchId } once verified via magic link.
-// We persist {id, email} in the URL hash (#?u=ID&e=EMAIL) because
-// localStorage is blocked in sandboxed iframes. URL hash survives reloads.
+// currentUser is hydrated from an httpOnly JWT cookie. Identity is never
+// persisted in the URL hash; the legacy u/e hash is removed on first load.
 let currentUser = null;
 // Why the Sign Up modal was opened. null | "donate". When "donate", we show a
 // context banner in the modal and auto-open the donation modal after sign-in.
@@ -714,7 +713,8 @@ async function onReactionClick(reaction) {
     await fetch(`${API_BASE}/api/chats/${currentChatId}/reaction`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: currentUser.id, reaction }),
+      credentials: "include",
+      body: JSON.stringify({ reaction }),
     });
   } catch (e) {
     console.warn("reaction post failed:", e?.message);
@@ -1561,8 +1561,8 @@ async function initAuth() {
           currentUser = data.user;
           mergePositiveCountOnSignIn(currentUser.id);
           setHashParam("magic", null);
-          setHashParam("u", String(currentUser.id));
-          setHashParam("e", currentUser.email || "");
+          setHashParam("u", null);
+          setHashParam("e", null);
           showSignedInUI();
           identifyUser(currentUser);
           track("signup_or_login", { method: "magic_link", user_id: currentUser.id });
@@ -1578,6 +1578,29 @@ async function initAuth() {
     }
   }
 
+  // Existing URL-hash sessions are intentionally not trusted. They must
+  // re-authenticate once, then receive the secure cookie-backed session.
+  if (params.u || params.e) {
+    setHashParam("u", null);
+    setHashParam("e", null);
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/user/me`, { credentials: "include" });
+    if (res.ok) {
+      const user = await res.json();
+      if (user && user.id) {
+        currentUser = user;
+        mergePositiveCountOnSignIn(currentUser.id);
+        showSignedInUI();
+        identifyUser(currentUser);
+        track("session_restored", { user_id: currentUser.id });
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn("Restore cookie session failed:", e?.message);
+  }
+  /*
   if (params.u && params.e) {
     try {
       const res = await fetch(`${API_BASE}/api/user/me?userId=${encodeURIComponent(params.u)}`);
@@ -1597,7 +1620,7 @@ async function initAuth() {
     } catch (e) {
       console.warn("Restore user from hash failed:", e?.message);
     }
-  }
+  }*/
 
   if (params.donation === "success") {
     setTimeout(showDonationThankYou, 500);
@@ -1957,7 +1980,7 @@ async function maybeShowDonationPrompt(trigger) {
   if (sessionDonationOptedOut) return;
   if (!currentUser || !currentUser.id) return;
   try {
-    const res = await fetch(`${API_BASE}/api/donations/eligibility?userId=${currentUser.id}`);
+    const res = await fetch(`${API_BASE}/api/donations/eligibility`, { credentials: "include" });
     if (!res.ok) return;
     const data = await res.json();
     if (!data.eligible) {
@@ -1981,7 +2004,8 @@ async function showDonationModal(trigger) {
     const res = await fetch(`${API_BASE}/api/donations/prompt/log`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: currentUser.id, trigger: trigger || "manual_button" }),
+      credentials: "include",
+      body: JSON.stringify({ trigger: trigger || "manual_button" }),
     });
     if (res.ok) {
       const data = await res.json();
@@ -2083,6 +2107,7 @@ async function recordPromptOutcome(promptId, outcome) {
     await fetch(`${API_BASE}/api/donations/prompt/${promptId}/outcome`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ outcome }),
     });
   } catch (e) {
@@ -2102,12 +2127,10 @@ async function handleDonateConfirm(amountCents, promptId, overlay) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        userId: currentUser.id,
         promptId,
         amountCents,
-        email: currentUser.email,
-        origin: window.location.origin,
       }),
+      credentials: "include",
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -2185,9 +2208,9 @@ async function loadChatHistory(query) {
   const emptyEl = document.getElementById("history-empty");
   if (!listEl) return;
   try {
-    const params = new URLSearchParams({ userId: String(currentUser.id) });
+    const params = new URLSearchParams();
     if (query) params.set("q", query);
-    const res = await fetch(`${API_BASE}/api/chats?${params.toString()}`);
+    const res = await fetch(`${API_BASE}/api/chats?${params.toString()}`, { credentials: "include" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const chats = await res.json();
     if (!Array.isArray(chats) || chats.length === 0) {

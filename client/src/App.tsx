@@ -19,16 +19,8 @@ import DeactivationsPage from "@/pages/DeactivationsPage";
 import NotFound from "@/pages/not-found";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 
-// Read token from URL hash param ?token=... (lets Ryan share a pre-authed link)
-function getTokenFromUrl(): string | null {
-  const hash = window.location.hash || "";
-  const match = hash.match(/[?&]token=([^&]+)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
 export default function App() {
-  const urlToken = getTokenFromUrl();
-  const [token, setToken] = useState<string | null>(urlToken);
+  const [token, setToken] = useState<string | null>(null);
 
   function handleLogin(t: string) {
     setToken(t);

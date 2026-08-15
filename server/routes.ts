@@ -2,6 +2,8 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { type Server } from "http";
 import { randomBytes } from "crypto";
 import { storage } from "./storage";
+import { db } from "./storage";
+import { sql } from "drizzle-orm";
 import { getScriptureResponse, getDeeperResponse } from "./ai";
 import { ask as askV2, drillDown as drillDownV2, isV2Configured } from "./ai-v2";
 import { crisisSafetyCheck } from "./crisis";
@@ -40,13 +42,18 @@ import { sgSendMail } from "./email/sendgrid-client";
 import { registerDonationRoutes } from "./donations";
 import { refreshCloudflareTraffic } from "./traffic";
 import { registerChurchSignupRoute } from "./church-signup";
+import {
+  attachUserIfPresent, createAdmin, findAdminByEmail, findAdminById, issueAdminTokens,
+  issueUserTokens, refreshTokens, requireAdmin, requireUser,
+  verifyGoogleIdToken,
+} from "./auth";
+import { anonymousQuestionLimiter, authenticatedQuestionQuota, queueAnthropic } from "./rate-limits";
+import bcrypt from "bcryptjs";
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
 // Simple token-based auth for the admin dashboard.
 // The frontend sends Authorization: Bearer <token> on every API request.
 // The token is the SHA-256 hash of the admin password stored in ADMIN_PASSWORD env var.
-
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "shepherd2026";
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   // Public routes — no auth required
@@ -68,7 +75,8 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/user/magic-link",
     "/user/verify",
     "/user/google",
-    "/user/me",
+    "/user/refresh",
+    "/admin/refresh",
     "/chats",
     "/donations",
     "/church-signup",
@@ -76,7 +84,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     // not via the admin bearer token. Must be in the public allowlist.
     "/email/webhook",
   ];
-  if (PUBLIC.some(p => req.path.startsWith(p))) return next();
+  if (PUBLIC.some(p => req.path === p || req.path.startsWith(`${p}/`))) return next();
   // Also allow GET /affiliations/:sessionId (for session restore)
   if (req.method === "GET" && req.path.match(/^\/affiliations\//)) return next();
   // POST /member-signups is public (consumer-facing first-visit modal).
@@ -84,15 +92,11 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   // rather than adding the prefix to the PUBLIC allowlist.
   if (req.method === "POST" && req.path === "/member-signups") return next();
 
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.replace("Bearer ", "").trim();
-  if (token !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  next();
+  return requireAdmin(req, res, next);
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  app.use("/api", attachUserIfPresent);
   // Apply auth middleware to all /api routes
   app.use("/api", requireAuth);
 
@@ -215,7 +219,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!token) return res.status(400).json({ error: "token is required" });
     const user = storage.verifyMagicToken(token);
     if (!user) return res.status(401).json({ error: "Invalid or expired token" });
-    res.json({ ok: true, user: { id: user.id, email: user.email, name: user.name, churchId: user.churchId } });
+    const tokens = issueUserTokens(res, { id: user.id, email: user.email, tier: (user as any).tier || "free" });
+    res.json({ ok: true, user: { id: user.id, email: user.email, name: user.name, churchId: user.churchId }, ...tokens });
   });
 
   /**
@@ -224,47 +229,35 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * Public — called from the app after Google sign-in.
    */
   app.post("/api/user/google", async (req, res) => {
-    const { googleId, email, name } = req.body;
-    if (!googleId || !email) return res.status(400).json({ error: "googleId and email are required" });
-
-    // Optional Sign Up fields. Trim + normalize; empty → null. Set only when
-    // creating a brand-new account so we never clobber an existing capture.
-    const homeChurchName = (typeof req.body.homeChurchName === "string"
-      ? req.body.homeChurchName.trim().slice(0, 200) : "") || null;
-    const rawZip = typeof req.body.zipCode === "string" ? req.body.zipCode.trim() : "";
-    if (rawZip && !/^\d{5}$/.test(rawZip)) {
-      return res.status(400).json({ error: "zipCode must be 5 digits" });
-    }
-    const zipCode = rawZip || null;
-
-    let user = storage.getUserByGoogleId(googleId);
-    if (!user) {
-      user = storage.getUserByEmail(email);
+    if (typeof req.body?.idToken !== "string") return res.status(400).json({ error: "Google ID token is required" });
+    try {
+      const { googleId, email, name } = await verifyGoogleIdToken(req.body.idToken);
+      let user = storage.getUserByGoogleId(googleId) || storage.getUserByEmail(email);
       if (user) {
-        // Link Google ID to existing account
-        user = storage.updateUser(user.id, { googleId, lastLoginAt: new Date().toISOString() })!;
+        user = storage.updateUser(user.id, { googleId, name: name || user.name, lastLoginAt: new Date().toISOString() })!;
       } else {
-        // Create new account
-        user = storage.createUser({
-          email, name: name || "", googleId, homeChurchName, zipCode,
-          createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString(),
-        });
+        user = storage.createUser({ email, name, googleId, createdAt: new Date().toISOString(), lastLoginAt: new Date().toISOString() });
       }
-    } else {
-      user = storage.updateUser(user.id, { lastLoginAt: new Date().toISOString() })!;
+      const tokens = issueUserTokens(res, { id: user.id, email: user.email, tier: (user as any).tier || "free" });
+      return res.json({ ok: true, user: { id: user.id, email: user.email, name: user.name, churchId: user.churchId }, ...tokens });
+    } catch {
+      return res.status(401).json({ error: "Google identity verification failed" });
     }
-
-    res.json({ ok: true, user: { id: user.id, email: user.email, name: user.name, churchId: user.churchId } });
   });
 
   /**
    * GET /api/user/me?userId=...
    * Get user profile. Public (user identified by ID passed from app).
    */
-  app.get("/api/user/me", (req, res) => {
-    const userId = Number(req.query.userId);
-    if (!userId) return res.status(400).json({ error: "userId required" });
-    const user = storage.getUserById(userId);
+  app.post("/api/user/refresh", (req, res) =>
+    refreshTokens(req, res, "user", id => {
+      const user = storage.getUserById(id);
+      return user ? { id: user.id, email: user.email, tier: (user as any).tier || "free" } : undefined;
+    }),
+  );
+
+  app.get("/api/user/me", requireUser, (req, res) => {
+    const user = storage.getUserById(req.user!.id);
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json({ id: user.id, email: user.email, name: user.name, churchId: user.churchId });
   });
@@ -276,11 +269,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * Save a chat (topic + verse + reflection) for a logged-in user.
    * Public — userId passed in body.
    */
-  app.post("/api/chats", (req, res) => {
-    const { userId, topic, question, verseRef, verseText, reflection } = req.body;
-    if (!userId || !topic) return res.status(400).json({ error: "userId and topic required" });
+  app.post("/api/chats", requireUser, (req, res) => {
+    const { topic, question, verseRef, verseText, reflection } = req.body;
+    if (!topic) return res.status(400).json({ error: "topic required" });
     const chat = storage.saveChat({
-      userId: Number(userId), topic,
+      userId: req.user!.id, topic,
       question: question || "",
       verseRef: verseRef || "",
       verseText: verseText || "",
@@ -294,13 +287,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * GET /api/chats?userId=1&q=anxiety
    * Get chat history for a user, optionally filtered by search query.
    */
-  app.get("/api/chats", (req, res) => {
-    const userId = Number(req.query.userId);
-    if (!userId) return res.status(400).json({ error: "userId required" });
+  app.get("/api/chats", requireUser, (req, res) => {
     const q = String(req.query.q || "").trim();
     const chatList = q
-      ? storage.searchUserChats(userId, q)
-      : storage.getUserChats(userId, 50);
+      ? storage.searchUserChats(req.user!.id, q)
+      : storage.getUserChats(req.user!.id, 50);
     res.json(chatList);
   });
 
@@ -312,11 +303,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * Body: { password: string }
    */
   app.post("/api/auth/login", (req, res) => {
-    const { password } = req.body;
-    if (password === ADMIN_PASSWORD) {
-      res.json({ token: ADMIN_PASSWORD, ok: true });
-    } else {
-      res.status(401).json({ error: "Incorrect password" });
+    const admin = findAdminByEmail(String(req.body?.email || ""));
+    const password = String(req.body?.password || "");
+    if (!admin || !admin.is_active || !bcrypt.compareSync(password, admin.password_hash)) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+    db.run(sql`UPDATE admin_users SET last_login_at = ${new Date().toISOString()} WHERE id = ${admin.id}`);
+    return res.json({ ok: true, ...issueAdminTokens(res, { id: admin.id, email: admin.email, role: admin.role }) });
+  });
+
+  app.post("/api/admin/refresh", (req, res) => refreshTokens(req, res, "admin", findAdminById));
+  app.post("/api/admin/users", requireAdmin, (req, res) => {
+    try {
+      return res.status(201).json({ admin: createAdmin(String(req.body?.email || ""), String(req.body?.password || ""), String(req.body?.role || "admin")) });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message || "Unable to create administrator" });
     }
   });
 
@@ -326,11 +327,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * POST /api/ai/scripture
    * Body: { topic, question? }
    */
-  app.post("/api/ai/scripture", crisisSafetyCheck, async (req, res) => {
+  app.post("/api/ai/scripture", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, async (req, res) => {
     const { topic, question = "" } = req.body;
     if (!topic) return res.status(400).json({ error: "topic is required" });
     try {
-      const result = await getScriptureResponse(topic, question);
+      const result = await queueAnthropic(res, () => getScriptureResponse(topic, question));
+      if (!result) return;
       res.json(result);
     } catch (err: any) {
       console.error("AI scripture error:", err.message);
@@ -342,12 +344,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * GET /api/ai/scripture?topic=Anxiety&question=...
    * Same as POST but via GET so iframe sandbox fetch restrictions don't block it.
    */
-  app.get("/api/ai/scripture", crisisSafetyCheck, async (req, res) => {
+  app.get("/api/ai/scripture", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, async (req, res) => {
     const topic = String(req.query.topic || "").trim();
     const question = String(req.query.question || "").trim();
     if (!topic) return res.status(400).json({ error: "topic is required" });
     try {
-      const result = await getScriptureResponse(topic, question);
+      const result = await queueAnthropic(res, () => getScriptureResponse(topic, question));
+      if (!result) return;
       res.json(result);
     } catch (err: any) {
       console.error("AI scripture GET error:", err.message);
@@ -359,13 +362,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * GET /api/ai/deeper?topic=Anxiety&question=...&prevRef=Philippians+4:6
    * Returns a deeper, different scripture on the same topic.
    */
-  app.get("/api/ai/deeper", crisisSafetyCheck, async (req, res) => {
+  app.get("/api/ai/deeper", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, async (req, res) => {
     const topic    = String(req.query.topic    || "").trim();
     const question = String(req.query.question || "").trim();
     const prevRef  = String(req.query.prevRef  || "").trim();
     if (!topic) return res.status(400).json({ error: "topic is required" });
     try {
-      const result = await getDeeperResponse(topic, question, prevRef);
+      const result = await queueAnthropic(res, () => getDeeperResponse(topic, question, prevRef));
+      if (!result) return;
       res.json(result);
     } catch (err: any) {
       console.error("AI deeper error:", err.message);
@@ -384,7 +388,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * topicHint is optional and treated as soft context only — the question
    * is the primary signal.
    */
-  app.get("/api/ai/ask", crisisSafetyCheck, async (req, res) => {
+  app.get("/api/ai/ask", anonymousQuestionLimiter, authenticatedQuestionQuota, crisisSafetyCheck, async (req, res) => {
     const question  = String(req.query.question  || "").trim();
     const topicHint = String(req.query.topicHint || "").trim();
     if (!question) return res.status(400).json({ error: "question is required" });
@@ -392,7 +396,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(503).json({ error: "AI v2 not configured", detail: "ANTHROPIC_API_KEY is not set" });
     }
     try {
-      const result = await askV2({ question, topicHint });
+      const result = await queueAnthropic(res, () => askV2({ question, topicHint }));
+      if (!result) return;
       res.json(result);
     } catch (err: any) {
       console.error("AI v2 ask error:", err.message);
@@ -405,7 +410,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
    * Drill-down: focused answer on a specific cited passage, in the
    * context of the user's original question.
    */
-  app.get("/api/ai/passage", async (req, res) => {
+  app.get("/api/ai/passage", anonymousQuestionLimiter, authenticatedQuestionQuota, async (req, res) => {
     const originalQuestion = String(req.query.originalQuestion || "").trim();
     const passageRef       = String(req.query.passageRef       || "").trim();
     if (!originalQuestion || !passageRef) {
@@ -415,7 +420,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(503).json({ error: "AI v2 not configured", detail: "ANTHROPIC_API_KEY is not set" });
     }
     try {
-      const result = await drillDownV2({ originalQuestion, passageRef });
+      const result = await queueAnthropic(res, () => drillDownV2({ originalQuestion, passageRef }));
+      if (!result) return;
       res.json(result);
     } catch (err: any) {
       console.error("AI v2 passage error:", err.message);
