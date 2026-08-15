@@ -76,6 +76,10 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/user/verify",
     "/user/google",
     "/user/refresh",
+    // /user/me is user-scoped (guarded by requireUser at the route itself),
+    // not admin-scoped. It must bypass the blanket requireAdmin gate below
+    // so mobile clients can hit it with their user Bearer token.
+    "/user/me",
     "/admin/refresh",
     "/chats",
     "/donations",
