@@ -424,6 +424,11 @@ body {
 
 .input-hint { font-size: 0.75rem; color: var(--text-light); }
 
+.input-disclosure {
+  margin: 6px 4px 0;
+  text-align: center;
+}
+
 .btn-ask {
   display: flex; align-items: center; gap: 6px;
   padding: 8px 16px;
@@ -1261,6 +1266,41 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Question of the Week disclosure ────────────────────────────────────── */
+.about-section {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+.about-card {
+  background: var(--cream-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-mid);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  padding: 20px;
+}
+.about-title {
+  color: var(--text-dark);
+  font-family: var(--font-serif);
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+.about-list {
+  margin: 12px 0;
+  padding-left: 20px;
+}
+.about-list li + li { margin-top: 8px; }
+.about-list strong { color: var(--text-dark); }
+.about-list a {
+  color: var(--brown);
+  text-decoration: underline;
+}
+.about-closing { margin: 0; }
+
 /* ── Site footer (legal disclosure) ─────────────────────────────────────── */
 .site-footer {
   margin-top: 48px;
@@ -1284,6 +1324,10 @@ body {
 }
 .site-footer-sep {
   opacity: 0.5;
+}
+.site-footer-link {
+  color: inherit;
+  text-decoration: underline;
 }
 
 /* ── Crisis Safety Card ────────────────────────────────────────────────────
