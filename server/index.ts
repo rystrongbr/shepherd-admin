@@ -177,6 +177,30 @@ app.use((req, res, next) => {
     const myShepherdPath = path.resolve(process.cwd(), "my-shepherd-app");
     const fs = require("fs");
 
+    // Legal pages (Privacy Policy + Terms of Service). Required by the App
+    // Store and Google Play submission processes. Served as static HTML files
+    // out of my-shepherd-app/ so they're host-agnostic (work at either
+    // app.myshepherdapp.church/privacy or the Cloudflare marketing site once
+    // we hand-mirror them there). Registered BEFORE the SPA fallback so the
+    // catch-all doesn't return index.html for /privacy.
+    const legalPages: Record<string, string> = {
+      "/privacy": "privacy.html",
+      "/privacy.html": "privacy.html",
+      "/privacy/": "privacy.html",
+      "/terms": "terms.html",
+      "/terms.html": "terms.html",
+      "/terms/": "terms.html",
+      "/legal.css": "legal.css",
+    };
+    app.use((req, res, next) => {
+      const file = legalPages[req.path];
+      if (!file) return next();
+      const contentType = file.endsWith(".css") ? "text/css; charset=utf-8" : "text/html; charset=utf-8";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=300");
+      return res.sendFile(path.join(myShepherdPath, file));
+    });
+
     // Path-based access for previews / non-prod hosts: e.g. Railway PR previews
     // hit https://<preview>.up.railway.app/my-shepherd/ to test Product 1.
     // Production traffic still uses the hostname route below.
