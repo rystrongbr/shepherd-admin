@@ -2558,18 +2558,25 @@ async function restoreAffiliation() {
         }
       }
     } catch (e) {}
+    // HOTFIX 2026-08-17: temporarily disable auto-open of the first-visit
+    // affiliation modal (church-matching path). A multi-panel show/hide bug
+    // is stacking the stay-connected form, its success panel, and the church-
+    // matching sub-panel in a single overflowing card. Pulling the auto-open
+    // trigger restores a clean pre-sign-in experience. Manual re-enable
+    // pending root-cause + repair (see follow-up task).
     // No existing affiliation found — show modal after short delay
-    setTimeout(() => openAffiliationModal(), 800);
+    // setTimeout(() => openAffiliationModal(), 800);
     return;
   }
 
-  // Stay-connected path (flag off): show the email+ZIP modal unless the visitor
-  // has already completed it or dismissed it within the suppression window,
-  // OR if a magic-link sign-in is in flight / already completed. Both cases
-  // mean the user is (about to be) authenticated and the modal is inappropriate.
-  if (shouldShowStayConnectedModal() && !isAuthInFlightOrDone()) {
-    setTimeout(() => openAffiliationModal(), 800);
-  }
+  // HOTFIX 2026-08-17: temporarily disable auto-open of the stay-connected
+  // email+ZIP modal for the same reason as above. Waitlist capture pauses
+  // until the multi-panel show/hide bug is repaired. Header "Sign In" and
+  // "Sign Up" buttons remain fully functional — this only kills the
+  // first-visit auto-nudge that overlaps with the sign-in modal.
+  // if (shouldShowStayConnectedModal() && !isAuthInFlightOrDone()) {
+  //   setTimeout(() => openAffiliationModal(), 800);
+  // }
 }
 
 // True if the visitor is either already signed in OR arrived with a magic
