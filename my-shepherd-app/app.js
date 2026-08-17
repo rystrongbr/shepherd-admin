@@ -689,8 +689,13 @@ async function onReactionClick(reaction) {
     // Show a small thank-you nudge first
     showInlineToast(reaction === "helped" ? "Thanks for the feedback. Save your chats?" : "Got it — thanks for the feedback.");
     if (reaction === "helped") {
-      // Trigger signup modal after a short pause so the toast is read first
-      setTimeout(() => openSignupModal("reaction"), 900);
+      // HOTFIX 2026-08-17: temporarily disable auto-open of the signup/login
+      // modal after a positive reaction. A multi-panel visibility bug is
+      // stacking the magic-link form, its success panel, and the mode toggle
+      // all at once inside the modal. Pulling this auto-trigger restores a
+      // clean home-screen experience — header Sign In / Sign Up buttons
+      // remain fully functional. Manual re-enable pending root-cause repair.
+      // setTimeout(() => openSignupModal("reaction"), 900);
     }
     return;
   }
@@ -1562,8 +1567,12 @@ function maybeShowSignupModal() {
   if (lastSignupPromptedAt > 0 && questionCount < lastSignupPromptedAt + 5) return;
   if (questionCount === lastSignupPromptedAt) return;
   lastSignupPromptedAt = questionCount;
+  // HOTFIX 2026-08-17: temporarily disable auto-open of the signup/login
+  // modal after N questions (cadence trigger). Same multi-panel visibility
+  // bug as the "reaction" trigger above. Header Sign In / Sign Up buttons
+  // remain fully functional. Manual re-enable pending root-cause repair.
   // Delay so the response renders + user has time to read before modal appears
-  setTimeout(() => openSignupModal("cadence"), 4500);
+  // setTimeout(() => openSignupModal("cadence"), 4500);
 }
 
 // ── Auth + Signup + Donations ──────────────────────────────────────────────
@@ -1839,6 +1848,16 @@ function openSignupModal(trigger) {
   }
 
   resetMagicLinkState();
+
+  // HOTFIX 2026-08-17: defensive hide of the donation-intent banner on every
+  // manual open. Screenshot 1715 caught the banner ("Sign up first to complete
+  // your donation — we'll take you there next.") showing on plain Sign-In
+  // clicks that had nothing to do with a donation. Force-hide unless the
+  // donation flow explicitly showed it just before.
+  const banner = document.getElementById("signup-intent-banner");
+  if (banner && trigger !== "donation") {
+    banner.style.display = "none";
+  }
 
   modal.style.display = "flex";
 }
