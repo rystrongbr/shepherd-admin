@@ -1424,3 +1424,16 @@ body {
   color: #7A6E5A;
   margin: 0;
 }
+
+/* HOTFIX 2026-08-17: Force-hide the first-visit affiliation modal.
+ * A multi-panel show/hide bug is stacking all three sibling sub-panels
+ * (stay-connected form, success panel, church-matching panel) inside the
+ * modal card. Even after commenting out the JS auto-open call sites in
+ * restoreAffiliation() (PR #40), the modal was still appearing in prod.
+ * This CSS override is the belt-and-suspenders killer: !important defeats
+ * any inline style.display="flex" the JS might set. Waitlist capture pauses
+ * until the underlying multi-panel bug is repaired.
+ *
+ * To restore: delete this rule.
+ */
+#affiliation-modal { display: none !important; }
