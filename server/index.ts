@@ -32,10 +32,40 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "https://posthog.com", "https://*.posthog.com", "https://cdnjs.cloudflare.com"],
-      styleSrc: ["'self'"],
-      imgSrc: ["'self'", "data:"],
-      connectSrc: ["'self'", "https://api.myshepherdapp.church", "https://posthog.com", "https://*.posthog.com", "https://api.anthropic.com"],
+      // HOTFIX 2026-08-17: the previous CSP omitted 'unsafe-inline' and the
+      // Google origins, which blocked ALL inline <script> execution on
+      // app.myshepherdapp.church — including the PostHog boot snippet and
+      // every inline style attribute. That in turn prevented app.js from
+      // running its DOMContentLoaded handler, so the modal-open/close JS never
+      // fired and the raw HTML rendered every modal panel simultaneously.
+      // Restoring 'unsafe-inline' for script + style and allowlisting Google
+      // Sign-In, Google Fonts, and gstatic fixes the entire cascade.
+      scriptSrc: [
+        "'self'",
+        "'unsafe-inline'",
+        "https://posthog.com",
+        "https://*.posthog.com",
+        "https://cdnjs.cloudflare.com",
+        "https://accounts.google.com",
+        "https://apis.google.com",
+      ],
+      styleSrc: [
+        "'self'",
+        "'unsafe-inline'",
+        "https://fonts.googleapis.com",
+        "https://accounts.google.com",
+      ],
+      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https://*.googleusercontent.com"],
+      connectSrc: [
+        "'self'",
+        "https://api.myshepherdapp.church",
+        "https://posthog.com",
+        "https://*.posthog.com",
+        "https://api.anthropic.com",
+        "https://accounts.google.com",
+      ],
+      frameSrc: ["https://accounts.google.com"],
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"],
       baseUri: ["'self'"],
