@@ -885,7 +885,17 @@ let searchDebounce = null;
 
 // Open the first-visit modal in whichever state the feature flag selects.
 // State A (flag off): "Stay connected" email+ZIP. State B (flag on): church search.
+//
+// Guard: never open on top of a signed-in user. The modal is a "first-visit
+// signup nudge"; showing it after auth is a race-condition regression (a
+// scheduled setTimeout in restoreAffiliation() firing after initAuth() has
+// completed a magic-link verify). Since restoreAffiliation() runs in parallel
+// with initAuth() and can't await it, we belt-and-suspenders here.
 function openAffiliationModal() {
+  if (currentUser && currentUser.id) {
+    // Signed-in user — skip. Not a bug, just a race we lost cleanly.
+    return;
+  }
   const modal = document.getElementById("affiliation-modal");
   const stayConnected = document.getElementById("first-visit-stay-connected");
   const churchMatching = document.getElementById("first-visit-church-matching");
@@ -2554,10 +2564,26 @@ async function restoreAffiliation() {
   }
 
   // Stay-connected path (flag off): show the email+ZIP modal unless the visitor
-  // has already completed it or dismissed it within the suppression window.
-  if (shouldShowStayConnectedModal()) {
+  // has already completed it or dismissed it within the suppression window,
+  // OR if a magic-link sign-in is in flight / already completed. Both cases
+  // mean the user is (about to be) authenticated and the modal is inappropriate.
+  if (shouldShowStayConnectedModal() && !isAuthInFlightOrDone()) {
     setTimeout(() => openAffiliationModal(), 800);
   }
+}
+
+// True if the visitor is either already signed in OR arrived with a magic
+// link that initAuth() is currently verifying. Prevents the first-visit
+// modal from stacking on top of a signed-in UI when localStorage is empty
+// (fresh install, private browsing, cleared cookies).
+function isAuthInFlightOrDone() {
+  if (currentUser && currentUser.id) return true;
+  // parseHashParams may be defined further up; guard for safety.
+  try {
+    const params = parseHashParams();
+    if (params && params.magic) return true;
+  } catch { /* no-op */ }
+  return false;
 }
 
 document.addEventListener("DOMContentLoaded", init);
