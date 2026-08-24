@@ -333,6 +333,13 @@ addColumnIfMissing("app_users",      "zip_code",           "TEXT");
 // the cross-church Discover feed. Defaults false; never flipped automatically.
 addColumnIfMissing("app_users",      "is_test_user",       "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("app_users",      "tier",               "TEXT NOT NULL DEFAULT 'free'");
+// StoreKit / IAP subscription state — populated by
+// server/iap/routes.ts POST /api/v1/iap/verify-receipt. All nullable
+// because existing rows are free-tier users with no subscription.
+addColumnIfMissing("app_users",      "subscription_product_id",        "TEXT");
+addColumnIfMissing("app_users",      "subscription_original_txn_id",   "TEXT");
+addColumnIfMissing("app_users",      "subscription_expires_at",        "TEXT");
+addColumnIfMissing("app_users",      "subscription_updated_at",        "TEXT");
 addColumnIfMissing("campaigns",      "meta",               "TEXT NOT NULL DEFAULT '{}'");
 // Q&A admin dashboard — capture verse + reflection for ALL traffic (anon +
 // signed-in) so the /questions page can show the full response, not just the
