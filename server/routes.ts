@@ -86,8 +86,10 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/donations",
     // IAP routes are user-scoped (each handler calls requireUser). They must
     // bypass the admin gate so the mobile client can hit them with its
-    // user Bearer token — same pattern as /user/me above.
-    "/v1/iap",
+    // user Bearer token — same pattern as /user/me above. The path is /iap,
+    // not /v1/iap, because the /api/v1 shim in server/index.ts strips /v1
+    // before this middleware sees the request.
+    "/iap",
     "/church-signup",
     // SendGrid event webhook — authenticated via Ed25519 signature in handler,
     // not via the admin bearer token. Must be in the public allowlist.
