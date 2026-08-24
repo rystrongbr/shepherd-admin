@@ -40,6 +40,7 @@ import {
 // move them into server/email/transactional.ts so this import goes away.
 import { sgSendMail } from "./email/sendgrid-client";
 import { registerDonationRoutes } from "./donations";
+import { registerIapRoutes } from "./iap/routes";
 import { refreshCloudflareTraffic } from "./traffic";
 import { registerChurchSignupRoute } from "./church-signup";
 import {
@@ -83,6 +84,10 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/admin/refresh",
     "/chats",
     "/donations",
+    // IAP routes are user-scoped (each handler calls requireUser). They must
+    // bypass the admin gate so the mobile client can hit them with its
+    // user Bearer token — same pattern as /user/me above.
+    "/v1/iap",
     "/church-signup",
     // SendGrid event webhook — authenticated via Ed25519 signature in handler,
     // not via the admin bearer token. Must be in the public allowlist.
@@ -106,6 +111,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // Donation routes (consumer-facing, in the public allowlist above).
   registerDonationRoutes(app);
+  registerIapRoutes(app);
 
   // Church-prospect signup route (myshepherdapp.church landing page form).
   registerChurchSignupRoute(app);

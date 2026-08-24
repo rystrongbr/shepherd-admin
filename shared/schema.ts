@@ -181,9 +181,26 @@ export const appUsers = sqliteTable("app_users", {
   // from the cross-church Discover feed. Defaults to false — never flipped
   // automatically. See server/routes.ts /api/discover/questions.
   isTestUser: integer("is_test_user", { mode: "boolean" }).notNull().default(false),
-  // Entitlement is deliberately a server-owned value. Stripe subscription
-  // wiring is a later workstream; callers never choose this field.
+  // Entitlement is deliberately a server-owned value. StoreKit / IAP
+  // wiring: server/iap/routes.ts flips this on verified receipt. Callers
+  // never choose this field.
   tier: text("tier").notNull().default("free"), // free | plus | enterprise
+
+  // ─── StoreKit subscription state ───────────────────────────────────────
+  // Populated by POST /api/v1/iap/verify-receipt. Together these let us
+  // (a) show remaining time in the UI, (b) let a nightly sweep expire
+  // stale entitlements, and (c) look up a user by original_transaction_id
+  // when Apple sends renewal notifications (v1.1 workstream).
+  //
+  // subscriptionProductId       = the church.myshepherdapp.<tier>.<period> IAP product
+  // subscriptionOriginalTxnId   = Apple's original_transaction_id (stable across renewals)
+  // subscriptionExpiresAt       = ISO expiry of the current subscription period
+  // subscriptionUpdatedAt       = last time this block was written (audit)
+  subscriptionProductId: text("subscription_product_id"),
+  subscriptionOriginalTxnId: text("subscription_original_txn_id"),
+  subscriptionExpiresAt: text("subscription_expires_at"),
+  subscriptionUpdatedAt: text("subscription_updated_at"),
+
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
   lastLoginAt: text("last_login_at").notNull().default(new Date().toISOString()),
 });
