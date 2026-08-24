@@ -36,7 +36,10 @@ export function registerIapRoutes(app: Express) {
    * same values, which is what we want if the mobile client retries after
    * a flaky network.
    */
-  app.post("/api/v1/iap/verify-receipt", requireUser, async (req, res) => {
+  // Registered at /api/iap/* — the /api/v1 shim in server/index.ts rewrites
+  // /api/v1/iap/verify-receipt → /api/iap/verify-receipt so mobile clients
+  // still call the v1 URL. Same pattern as /api/user/me.
+  app.post("/api/iap/verify-receipt", requireUser, async (req, res) => {
     const parsed = verifyRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" });
@@ -116,7 +119,7 @@ export function registerIapRoutes(app: Express) {
    * Also returns expires_at so the client can show an appropriate UI when
    * a subscription is expiring soon.
    */
-  app.get("/api/v1/iap/entitlement", requireUser, (req, res) => {
+  app.get("/api/iap/entitlement", requireUser, (req, res) => {
     const row = db.get<{
       tier: string;
       subscription_product_id: string | null;
