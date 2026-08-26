@@ -220,6 +220,9 @@ app.use((req, res, next) => {
       "/terms": "terms.html",
       "/terms.html": "terms.html",
       "/terms/": "terms.html",
+      "/support": "support.html",
+      "/support.html": "support.html",
+      "/support/": "support.html",
       "/legal.css": "legal.css",
     };
     app.use((req, res, next) => {
