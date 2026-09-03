@@ -378,8 +378,86 @@ body {
   font-size: 0.88rem;
   color: var(--text-mid);
   line-height: 1.6;
-  max-width: 400px;
+  max-width: 440px;
   margin: 0 auto;
+}
+
+/* Three-jobs mini-strip: Between Sundays / Safe First Step / Daily Habit.
+   Positions My Shepherd for cold visitors (podcast listeners, share links,
+   organic search) who need to grasp what the app is for in one glance. */
+.hero-jobs {
+  list-style: none;
+  padding: 0;
+  margin: 22px auto 14px;
+  max-width: 620px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hero-job {
+  background: var(--cream-card, #FBF4E9);
+  border: 1px solid var(--border, rgba(123, 74, 30, 0.14));
+  border-radius: 12px;
+  padding: 12px 10px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hero-job-title {
+  font-family: var(--font-serif);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--brown-deep, #7B4A1E);
+  letter-spacing: 0.01em;
+}
+
+.hero-job-sub {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--text-mid);
+}
+
+@media (max-width: 480px) {
+  .hero-jobs {
+    grid-template-columns: 1fr;
+    max-width: 320px;
+    gap: 8px;
+  }
+  .hero-job {
+    padding: 10px 12px;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px;
+    text-align: left;
+  }
+  .hero-job-title {
+    font-size: 0.78rem;
+    flex-shrink: 0;
+  }
+  .hero-job-sub {
+    font-size: 0.7rem;
+  }
+}
+
+/* Trust-bar strip under the hero jobs. Small, muted, one line. */
+.hero-trustbar {
+  margin: 4px auto 0;
+  font-size: 0.7rem;
+  color: var(--text-mid);
+  letter-spacing: 0.02em;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  opacity: 0.85;
+}
+
+.hero-trustbar span {
+  display: inline-block;
 }
 
 /* ─── Input ───────────────────────────────────────────── */
