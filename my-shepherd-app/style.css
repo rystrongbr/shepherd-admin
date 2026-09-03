@@ -7,13 +7,18 @@
   --brown-light:#A0673A;
   --gold:       #C8852A;
   --gold-dark:  #A86C1E;
-  --cream:      #F5F0EB;
-  --cream-deep: #EDE8E2;
-  --cream-card: #FFFDF9;
+  /* Warm cream palette — matches the mobile app background exactly (#F3EFE6
+     sampled from the iOS build). Previously the webapp bg was slightly cooler
+     (#F5F0EB) and cards were near-white (#FFFDF9), creating a harsh
+     white-slab-on-tan seam at the header. Now the whole page reads as one
+     continuous warm parchment surface, same as mobile. */
+  --cream:      #F6F0E2;
+  --cream-deep: #ECE4D2;
+  --cream-card: #FFFCF3;
   --text-dark:  #1F1F1F;
   --text-mid:   #5A4A3A;
   --text-light: #8A7A6A;
-  --border:     #E2D9CF;
+  --border:     #E6D8C4;
   --shadow-sm:  0 1px 4px rgba(0,0,0,0.07);
   --shadow-md:  0 4px 16px rgba(0,0,0,0.10);
   --radius:     14px;
@@ -310,8 +315,11 @@ body {
 
 /* ─── App Header ──────────────────────────────────────── */
 .app-header {
-  background: var(--cream-card);
-  border-bottom: 1px solid var(--border);
+  /* Blend into body: mobile has no visible header divide, just floating
+     wordmark + actions on the same warm surface. Border removed for the
+     same reason; the tab-bar underline below already separates content. */
+  background: var(--cream);
+  border-bottom: none;
   padding: 0 16px;
   position: sticky; top: 0; z-index: 100;
 }
