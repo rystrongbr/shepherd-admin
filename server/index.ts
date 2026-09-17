@@ -252,6 +252,10 @@ app.use((req, res, next) => {
       res.setHeader("Cache-Control", "public, max-age=3600");
       return res.sendFile(
         path.join(myShepherdPath, ".well-known", "apple-app-site-association"),
+        // Express defaults dotfiles: 'ignore' which 404s any path segment
+        // starting with a dot. AASA lives under /.well-known/ so we must
+        // opt in with 'allow' or the file will never be served.
+        { dotfiles: "allow" },
       );
     });
 
