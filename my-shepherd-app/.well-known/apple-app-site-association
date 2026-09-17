@@ -1,0 +1,28 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": [
+          "TTVQF57344.church.myshepherdapp"
+        ],
+        "components": [
+          {
+            "/": "/auth/callback",
+            "?": { "token": "?*" },
+            "comment": "Magic-link authentication callback with token parameter"
+          },
+          {
+            "/": "/auth/callback*",
+            "comment": "Auth callback and any subpaths"
+          }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "TTVQF57344.church.myshepherdapp"
+    ]
+  }
+}
