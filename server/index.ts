@@ -234,6 +234,27 @@ app.use((req, res, next) => {
       return res.sendFile(path.join(myShepherdPath, file));
     });
 
+    // Apple App Site Association (AASA) — required for iOS Universal Links.
+    // Serves the file with the correct application/json Content-Type at both
+    // the canonical /.well-known/ path and the legacy root path Apple still
+    // checks for backward compatibility. MUST be served over HTTPS with no
+    // redirects, no auth challenges, and Content-Type application/json.
+    // Registered BEFORE the SPA fallback so the catch-all doesn't return
+    // index.html for these paths.
+    const aasaPaths = [
+      "/.well-known/apple-app-site-association",
+      "/apple-app-site-association",
+    ];
+    app.use((req, res, next) => {
+      if (!aasaPaths.includes(req.path)) return next();
+      res.setHeader("Content-Type", "application/json");
+      // AASA is fetched by iOS on install/update; short cache is fine.
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.sendFile(
+        path.join(myShepherdPath, ".well-known", "apple-app-site-association"),
+      );
+    });
+
     // Path-based access for previews / non-prod hosts: e.g. Railway PR previews
     // hit https://<preview>.up.railway.app/my-shepherd/ to test Product 1.
     // Production traffic still uses the hostname route below.
