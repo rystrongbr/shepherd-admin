@@ -278,7 +278,15 @@ app.use((req, res, next) => {
     // unknown paths on app.myshepherdapp.church, so all we need here is to
     // guarantee the path exists on preview / non-prod hosts too (e.g. Railway
     // preview deploys) so end-to-end testing works before promotion to prod.
-    app.get(["/verify", "/verify/*"], (req, res, next) => {
+    // Express 5 removed the bare `*` wildcard from path-to-regexp — all
+    // wildcards must be named (e.g. `*splat` or `:rest*`). Using `"/verify/*"`
+    // throws `TypeError: Missing parameter name` at route-registration time,
+    // which crashes the server on startup. Use middleware-style matching
+    // instead so we don't have to fight path-to-regexp v6 syntax.
+    app.use((req, res, next) => {
+      if (req.method !== "GET") return next();
+      // Match `/verify` exactly and `/verify/anything`, but not `/verifyfoo`.
+      if (req.path !== "/verify" && !req.path.startsWith("/verify/")) return next();
       // Skip API paths just in case a future /verify API route is added
       // upstream of this middleware.
       if (req.path.startsWith("/api")) return next();
