@@ -177,9 +177,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     storage.setMagicToken(email, token, expiry, { homeChurchName, zipCode });
 
-    // Build magic link URL
+    // Build magic link URL.
+    //
+    // We use the path-based /verify?token=... shape so iOS can route this via
+    // Universal Links directly to the installed native app (see AASA file at
+    // /.well-known/apple-app-site-association). The web app also handles this
+    // path when the app isn't installed — the /verify route rehydrates the
+    // legacy #?magic= flow so browser users get the same experience.
+    //
+    // Previously this used `${baseUrl}/#?magic=${token}`, which put the token
+    // in the URL fragment. Fragments are stripped before Universal Link
+    // matching, so iOS could NEVER route those links to the app — every tap
+    // fell back to Safari + the in-page "Open in app" overlay. That overlay is
+    // what Apple's iPad reviewer saw failing on iPad Air 11-inch (M3), iPadOS
+    // 27.0. Path + query string keeps the token visible to iOS.
     const baseUrl = process.env.APP_URL || "https://app.myshepherdapp.church";
-    const magicUrl = `${baseUrl}/#?magic=${token}`;
+    const magicUrl = `${baseUrl}/verify?token=${token}`;
 
     // Resolve SendGrid config: env vars first, fall back to legacy church-row
     // setup so existing installs keep working until migrated.

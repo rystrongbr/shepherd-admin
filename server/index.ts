@@ -259,6 +259,34 @@ app.use((req, res, next) => {
       );
     });
 
+    // Magic-link verification landing page. This path is the target of the
+    // /verify?token=... URL sent in magic-link emails. Behaviour splits by
+    // installed-app state, which iOS handles for us:
+    //
+    //   * App IS installed on iOS — iOS intercepts BEFORE Safari loads this
+    //     route (Universal Links, per AASA above). Native app receives the
+    //     URL, extracts the token, verifies it, signs the user in. This
+    //     Express handler never runs on the reviewer's device.
+    //
+    //   * App NOT installed / desktop / Android — the browser loads this
+    //     route. We serve the same index.html the root path serves, and the
+    //     existing client-side magic-link handler in my-shepherd-app/app.js
+    //     picks up the token from the query string. Registered BEFORE the SPA
+    //     fallback so /verify doesn't 404 or get treated as an API path.
+    //
+    // The consumer-domain SPA middleware below already serves index.html for
+    // unknown paths on app.myshepherdapp.church, so all we need here is to
+    // guarantee the path exists on preview / non-prod hosts too (e.g. Railway
+    // preview deploys) so end-to-end testing works before promotion to prod.
+    app.get(["/verify", "/verify/*"], (req, res, next) => {
+      // Skip API paths just in case a future /verify API route is added
+      // upstream of this middleware.
+      if (req.path.startsWith("/api")) return next();
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      return res.sendFile(path.join(myShepherdPath, "index.html"));
+    });
+
     // Path-based access for previews / non-prod hosts: e.g. Railway PR previews
     // hit https://<preview>.up.railway.app/my-shepherd/ to test Product 1.
     // Production traffic still uses the hostname route below.

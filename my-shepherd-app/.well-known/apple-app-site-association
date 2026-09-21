@@ -8,13 +8,13 @@
         ],
         "components": [
           {
-            "/": "/auth/callback",
+            "/": "/verify",
             "?": { "token": "?*" },
             "comment": "Magic-link authentication callback with token parameter"
           },
           {
-            "/": "/auth/callback*",
-            "comment": "Auth callback and any subpaths"
+            "/": "/verify/*",
+            "comment": "Verify path and any subpaths"
           }
         ]
       }

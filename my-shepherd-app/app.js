@@ -1617,6 +1617,34 @@ function isPhoneUserAgent() {
 async function initAuth() {
   const params = parseHashParams();
 
+  // Universal Link magic-link inbound: the email now points at
+  //   https://app.myshepherdapp.church/verify?token=TOKEN
+  // On iOS with the native app installed, this URL never reaches the browser
+  // — iOS routes it directly to the app via Universal Links (see AASA file
+  // at /.well-known/apple-app-site-association). On desktop, Android, and
+  // iPhone/iPad without the app installed, this DOES load in the browser and
+  // we treat it exactly like the legacy #?magic= flow. To keep the rest of
+  // this function unchanged, we hoist ?token= from the location's query
+  // string into the params.magic slot the downstream code already handles.
+  //
+  // The `?web=1` escape hatch continues to work for both shapes because it's
+  // read from the hash params object.
+  if (!params.magic && typeof window !== "undefined") {
+    try {
+      const search = new URLSearchParams(window.location.search || "");
+      const qsToken = search.get("token");
+      if (qsToken) {
+        params.magic = qsToken;
+        // Rewrite the URL so a back-nav doesn't retry a used token, and so
+        // downstream setHashParam("magic", null) calls actually clear state.
+        // We drop the token from the query string but keep the /verify path
+        // so refreshes still resolve to this handler.
+        const cleanUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState(null, "", cleanUrl);
+      }
+    } catch { /* URL parsing failures are harmless — fall through */ }
+  }
+
   // Mobile magic-link handoff: if the user tapped the magic link on a phone,
   // deep-link the token into the native app instead of verifying it here.
   // The web verify endpoint consumes the token on success, so we MUST NOT
