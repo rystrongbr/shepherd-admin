@@ -50,6 +50,7 @@ import {
 } from "./auth";
 import { anonymousQuestionLimiter, authenticatedQuestionQuota, queueAnthropic } from "./rate-limits";
 import bcrypt from "bcryptjs";
+import { registerReviewerSignin } from "./reviewer-signin";
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
 // Simple token-based auth for the admin dashboard.
@@ -74,6 +75,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
     "/ai/passage",
     "/onboard",
     "/user/magic-link",
+    "/user/reviewer-signin",
     "/user/verify",
     "/user/google",
     "/user/refresh",
@@ -114,6 +116,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Donation routes (consumer-facing, in the public allowlist above).
   registerDonationRoutes(app);
   registerIapRoutes(app);
+  registerReviewerSignin(app, {
+    findUser: email => storage.getUserByEmail(email),
+    issueTokens: issueUserTokens,
+  });
 
   // Church-prospect signup route (myshepherdapp.church landing page form).
   registerChurchSignupRoute(app);
