@@ -1,0 +1,66 @@
+# Owner dashboard password recovery
+
+This operator-only startup reset targets exactly the existing active owner
+`ryan@myshepherdapp.church`. It does not add a public reset endpoint, create an
+administrator, promote an account, or change the mobile binary, consumer users,
+Apple reviewer credentials, subscriptions, or waitlist records.
+
+## Owner steps
+
+1. Review and merge this PR. The deployment alone does nothing without the
+   two variables below.
+2. In Railway, open the production `shepherd-admin` service in
+   `thriving-quietude`, using its existing persistent production database.
+   Add these as **service variables only**, not shared/project variables:
+   - `OWNER_PASSWORD_RESET_ID`: `owner-reset-20260928-01`
+   - `OWNER_PASSWORD_RESET_PASSWORD`: a new unique password generated in your
+     password manager. Use 24–40 ASCII characters, no leading/trailing spaces.
+     Save it in your password manager with the admin email.
+3. Apply both variables together and deploy. Never paste the password into
+   chat, GitHub, screenshots, or command history. Do not change `ADMIN_PASSWORD`,
+   `JWT_SECRET`, `DB_PATH`, or any `REVIEWER_*` variables.
+4. The deployment log should show exactly:
+   `[owner-password-reset] applied`
+   No password or hash is logged by this recovery feature.
+5. Sign into https://admin.myshepherdapp.church with the owner email and the new
+   password. Open **Launch list** and confirm the test signup appears.
+6. Delete **both** `OWNER_PASSWORD_RESET_*` service variables and deploy again.
+   The database password remains changed. Recheck owner sign-in and both Apple
+   reviewer paths. Do not resubmit or rebuild the mobile app.
+
+The assistant prepares the PR; the owner approves the merge and production
+configuration. No production credentials are included in the PR.
+
+## One-time and failure behavior
+
+- A unique reset ID is recorded with owner ID and timestamp in
+  `owner_password_reset_audit`, in the same SQLite transaction as the update.
+- Reusing an ID returns `already-applied`, even if the password value changed.
+  Leaving variables present cannot overwrite a later password with that ID.
+- Password validation: at least 20 characters, at most 72 UTF-8 bytes
+  (bcrypt's limit), no outer whitespace. Stored as bcrypt cost 12, not plaintext.
+- The password is removed from the process environment once read. Railway
+  retains its saved variable until the owner deletes it; use step 6.
+- Existing owner refresh tokens are revoked. Existing owner access JWTs remain
+  valid until their configured expiry (default 15 minutes). This is forgotten
+  password recovery, not a complete incident-response/session-revocation tool.
+  Do not rotate the shared JWT secret: doing so affects mobile users/reviewers.
+- Other administrators and consumer/reviewer refresh tokens are unchanged.
+- `invalid-configuration`: fix the two variables; no password change occurred.
+- `owner-unavailable`: exact owner was missing, inactive, not an owner, or
+  ambiguous. No user is automatically created/reactivated/promoted. Stop and
+  investigate the selected service/database rather than trying another account.
+- `failed`: transaction rolled back. Consumer service continues starting.
+  Stop and investigate privately; database errors are not emitted by this feature.
+- No variables: no recovery SQL/schema changes and no recovery log entry.
+- A future intentional reset requires a new unique ID. Never remove audit
+  records to replay an old ID. Restoring a pre-reset database backup also restores
+  the old password/audit state, which is another reason to remove the variables.
+
+## Validation
+
+Tests cover owner-only mutation, isolated reviewer/waitlist data, refresh-token
+scope, replay prevention, validation, unavailable owners, and rollback.
+Run `npm test`, `npm run test:client`, `npm run check`, and `npm run build`.
+Existing reviewer integration tests cover login, tier, refresh, and magic links.
+After owner deployment, live owner login and reviewer checks are still required.
