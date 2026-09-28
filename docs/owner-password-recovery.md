@@ -50,6 +50,26 @@ configuration. No production credentials are included in the PR.
 - `owner-unavailable`: exact owner was missing, inactive, not an owner, or
   ambiguous. No user is automatically created/reactivated/promoted. Stop and
   investigate the selected service/database rather than trying another account.
+  The following `[owner-password-reset-diagnostic]` line now identifies the
+  condition with read-only counts and allowlisted labels:
+  - `admin-table-missing` or `admin-table-empty`: owner setup has not populated
+    the currently selected database. Verify the service and persistent volume
+    before considering separately approved owner creation.
+  - `target-email-not-found`: other admin accounts exist, but none match the
+    fixed email. Do not create another owner or guess email addresses.
+  - `target-not-owner`: the matching account exists and is active, but is not
+    an owner. A role change requires separate explicit approval and is not
+    performed by this reset.
+  - `target-inactive`: matching account is inactive; do not automatically enable.
+  - `target-email-ambiguous`: more than one case-insensitive match; stop.
+  - `diagnostic-unavailable`: inspection failed; no raw database error is logged.
+  - `target-eligible`: the read-only follow-up found an eligible account; if the
+    preceding reset reported unavailable, investigate concurrent account changes.
+  Counts include total administrators, active owners, and matching records.
+  A unique matching record also reports `targetRole` (`owner`, `admin`, `other`)
+  and `targetActive`. No email, password, hash, token, raw role, or record ID is
+  emitted. This diagnostic runs only when an explicitly configured reset
+  reports `owner-unavailable`; no additional variable is required.
 - `failed`: transaction rolled back. Consumer service continues starting.
   Stop and investigate privately; database errors are not emitted by this feature.
 - No variables: no recovery SQL/schema changes and no recovery log entry.
