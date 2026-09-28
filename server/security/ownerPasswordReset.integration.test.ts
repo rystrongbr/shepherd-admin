@@ -12,15 +12,15 @@ process.env.ENABLE_REVIEWER_SIGNIN = "true";
 process.env.REVIEWER_ENTERPRISE_PASSWORD_HASH = bcrypt.hashSync("paid-review-test-password", 12);
 process.env.REVIEWER_FREE_PASSWORD_HASH = bcrypt.hashSync("free-review-test-password", 12);
 
-test("real routes accept new owner password, reject old password/refresh, and preserve reviewer sessions and tiers", async () => {
+test("real routes accept guarded first owner and password reset, reject old credentials, and preserve reviewer sessions and tiers", async () => {
   const { registerRoutes } = await import("../routes");
-  const { createAdmin } = await import("../auth");
+  const { ensureAuthTables } = await import("../auth");
   const { storage, sqlite } = await import("../storage");
   const { applyOwnerPasswordReset } = await import("./ownerPasswordReset");
   const ownerEmail = "ryan@myshepherdapp.church";
   const oldPassword = "old-owner-integration-password";
   const newPassword = "new-owner-integration-password";
-  createAdmin(ownerEmail, oldPassword, "owner");
+  ensureAuthTables();
   const accounts = [
     { email: "apple-review@myshepherdapp.church", password: "paid-review-test-password", tier: "enterprise" },
     { email: "apple-review+free@myshepherdapp.church", password: "free-review-test-password", tier: "free" },
@@ -44,15 +44,20 @@ test("real routes accept new owner password, reject old password/refresh, and pr
     headers: { Authorization: `Bearer ${token}` },
   });
   try {
-    const originalOwner = await post("/auth/login", { email: ownerEmail, password: oldPassword });
-    assert.equal(originalOwner.status, 200);
-    const originalOwnerSession = await originalOwner.json();
     const reviewerSessions: any[] = [];
     for (const account of accounts) {
       const response = await post("/v1/user/reviewer-signin", { email: account.email, password: account.password });
       assert.equal(response.status, 200);
       reviewerSessions.push(await response.json());
     }
+    assert.equal(applyOwnerPasswordReset(sqlite, {
+      OWNER_PASSWORD_RESET_ID: "integration-first-owner-20260928",
+      OWNER_PASSWORD_RESET_PASSWORD: oldPassword,
+      OWNER_PASSWORD_RESET_ALLOW_FIRST_OWNER: "true",
+    }), "owner-created");
+    const originalOwner = await post("/auth/login", { email: ownerEmail, password: oldPassword });
+    assert.equal(originalOwner.status, 200);
+    const originalOwnerSession = await originalOwner.json();
     assert.equal(applyOwnerPasswordReset(sqlite, {
       OWNER_PASSWORD_RESET_ID: "integration-reset-20260928",
       OWNER_PASSWORD_RESET_PASSWORD: newPassword,
