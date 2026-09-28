@@ -74,5 +74,41 @@ export function runOwnerPasswordReset(
 ): ResetResult {
   const result = applyOwnerPasswordReset(sqlite, env);
   if (result !== "disabled") log(`[owner-password-reset] ${result}`);
+  if (result === "owner-unavailable") {
+    log(`[owner-password-reset-diagnostic] ${JSON.stringify(inspectOwnerAccount(sqlite))}`);
+  }
   return result;
+}
+
+/**
+ * Read-only diagnosis of the fixed target. Only counts and allowlisted labels:
+ * never emails, passwords, hashes, tokens, IDs, raw roles or database errors.
+ */
+export function inspectOwnerAccount(sqlite: Database.Database) {
+  try {
+    const exists = sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'admin_users'",
+    ).get();
+    if (!exists) return { reason: "admin-table-missing" };
+    const counts = sqlite.prepare(`SELECT COUNT(*) AS adminCount,
+      COALESCE(SUM(CASE WHEN role = 'owner' AND is_active = 1 THEN 1 ELSE 0 END), 0) AS activeOwnerCount
+      FROM admin_users`).get() as { adminCount: number; activeOwnerCount: number };
+    const matchCount = (sqlite.prepare(
+      "SELECT COUNT(*) AS count FROM admin_users WHERE lower(email) = ?",
+    ).get(OWNER_EMAIL) as { count: number }).count;
+    if (counts.adminCount === 0) return { reason: "admin-table-empty", ...counts, matchingAccountCount: 0 };
+    if (matchCount === 0) return { reason: "target-email-not-found", ...counts, matchingAccountCount: 0 };
+    if (matchCount > 1) return { reason: "target-email-ambiguous", ...counts, matchingAccountCount: matchCount };
+    const target = sqlite.prepare(
+      "SELECT role, is_active FROM admin_users WHERE lower(email) = ?",
+    ).get(OWNER_EMAIL) as { role: string; is_active: number };
+    const targetRole = target.role === "owner" ? "owner" : target.role === "admin" ? "admin" : "other";
+    const targetActive = target.is_active === 1;
+    return {
+      reason: !targetActive ? "target-inactive" : targetRole !== "owner" ? "target-not-owner" : "target-eligible",
+      ...counts, matchingAccountCount: 1, targetRole, targetActive,
+    };
+  } catch {
+    return { reason: "diagnostic-unavailable" };
+  }
 }

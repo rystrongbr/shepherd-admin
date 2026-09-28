@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import bcrypt from "bcryptjs";
-import { applyOwnerPasswordReset, runOwnerPasswordReset } from "./ownerPasswordReset";
+import { applyOwnerPasswordReset, inspectOwnerAccount, runOwnerPasswordReset } from "./ownerPasswordReset";
 
 const email = "ryan@myshepherdapp.church";
 const oldPassword = "old-owner-test-password-only";
@@ -146,5 +146,63 @@ test("applied log contains only a status, and recovery also works before any ref
     assert.equal(runOwnerPasswordReset(db, configuration(), text => logs.push(text)), "applied");
     assert.deepEqual(logs, ["[owner-password-reset] applied"]);
     assert.equal(bcrypt.compareSync(newPassword, hash(db)), true);
+  } finally { db.close(); }
+});
+
+test("read-only diagnostics distinguish missing account, missing role, inactivity and empty setup", () => {
+  const cases = [
+    ["", "target-eligible", 2, 1, 1],
+    ["UPDATE admin_users SET role = 'admin' WHERE id = 1", "target-not-owner", 2, 0, 1],
+    ["UPDATE admin_users SET is_active = 0 WHERE id = 1", "target-inactive", 2, 0, 1],
+    ["DELETE FROM admin_users WHERE id = 1", "target-email-not-found", 1, 0, 0],
+    ["UPDATE admin_users SET email = 'different-owner@example.com' WHERE id = 1", "target-email-not-found", 2, 1, 0],
+    ["INSERT INTO admin_users SELECT 3, upper(email), password_hash, role, is_active FROM admin_users WHERE id = 1", "target-email-ambiguous", 3, 2, 2],
+    ["DELETE FROM admin_users", "admin-table-empty", 0, 0, 0],
+  ] as const;
+  for (const [mutation, reason, adminCount, activeOwnerCount, matchingAccountCount] of cases) {
+    const db = fixture();
+    try {
+      if (mutation) db.exec(mutation);
+      const before = db.serialize();
+      const diagnosis = inspectOwnerAccount(db);
+      assert.equal(diagnosis.reason, reason);
+      assert.equal(diagnosis.adminCount, adminCount);
+      assert.equal(diagnosis.activeOwnerCount, activeOwnerCount);
+      assert.equal(diagnosis.matchingAccountCount, matchingAccountCount);
+      assert.deepEqual(db.serialize(), before);
+    } finally { db.close(); }
+  }
+});
+
+test("unavailable-owner startup log reports sanitized role without exposing account or credential data", () => {
+  const db = fixture();
+  try {
+    db.prepare("UPDATE admin_users SET role = ? WHERE id = 1").run("private-unexpected-role-value");
+    const before = db.serialize();
+    const logs: string[] = [];
+    assert.equal(runOwnerPasswordReset(db, configuration(), text => logs.push(text)), "owner-unavailable");
+    assert.equal(logs[0], "[owner-password-reset] owner-unavailable");
+    const diagnosis = JSON.parse(logs[1].replace("[owner-password-reset-diagnostic] ", ""));
+    assert.equal(diagnosis.reason, "target-not-owner");
+    assert.equal(diagnosis.targetRole, "other");
+    assert.equal(diagnosis.targetActive, true);
+    for (const sensitive of [email, oldHash, newPassword, "private-unexpected-role-value"]) {
+      assert.equal(logs.join("\n").includes(sensitive), false);
+    }
+    assert.deepEqual(db.serialize(), before);
+  } finally { db.close(); }
+});
+
+test("diagnostic handles missing tables or malformed schema without writing or leaking errors", () => {
+  const db = fixture();
+  try {
+    db.exec("DROP TABLE admin_users");
+    let before = db.serialize();
+    assert.deepEqual(inspectOwnerAccount(db), { reason: "admin-table-missing" });
+    assert.deepEqual(db.serialize(), before);
+    db.exec("CREATE TABLE admin_users (unrelated TEXT)");
+    before = db.serialize();
+    assert.deepEqual(inspectOwnerAccount(db), { reason: "diagnostic-unavailable" });
+    assert.deepEqual(db.serialize(), before);
   } finally { db.close(); }
 });
