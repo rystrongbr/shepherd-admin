@@ -4,6 +4,42 @@ This operator-only startup reset targets exactly the existing active owner
 `ryan@myshepherdapp.church`. It does not add a public reset endpoint, create an
 administrator, promote an account, or change the mobile binary, consumer users,
 Apple reviewer credentials, subscriptions, or waitlist records.
+The separately gated first-owner setup below is the only exception to
+no account creation; it requires explicit operator approval and an empty
+existing admin table. Normal password-reset behavior is unchanged.
+
+## First-owner setup for a verified empty admin table
+
+On September 28 the production diagnostic reported `admin-table-empty`,
+`adminCount: 0`, `activeOwnerCount: 0`, `matchingAccountCount: 0`.
+Ryan authorized preparing guarded first-owner setup. The code remains disabled
+until the operator explicitly sets the additional service variable.
+
+1. Review/merge the first-owner setup PR and wait for production deployment.
+2. In the verified production `thriving-quietude` / `shepherd-admin` service,
+   keep the two previously configured reset variables and privately saved password.
+   Add **service-only** `OWNER_PASSWORD_RESET_ALLOW_FIRST_OWNER=true`.
+   Do not use a shared/project variable or modify any reviewer/JWT/DB settings.
+3. Deploy. Expect `[owner-password-reset] owner-created`.
+4. Sign into https://admin.myshepherdapp.church using
+   `ryan@myshepherdapp.church` and the password already saved privately in Railway.
+   Open **Launch list** and verify the real test signup.
+5. Delete **all three** `OWNER_PASSWORD_RESET_*` variables and deploy again.
+   The owner account and password remain in the database.
+6. Recheck owner sign-in and both Apple reviewer logins/tiers.
+
+The first-owner flag must be exactly `true`. Creation and its one-time audit
+record are atomic under an immediate SQLite transaction. Any existing admin
+account, even inactive or non-owner, makes this mode return `bootstrap-refused`
+without changing it. It also refuses a different operation ID if prior recovery
+audit history exists. A reused operation ID returns `already-applied` and cannot
+overwrite a password or recreate a deleted owner. With a missing admin table it
+still refuses: it does not silently initialize an unknown database.
+
+No consumer records or sessions, waitlist entries, reviewer credentials, or
+mobile files are changed. Do not infer creation from deployment success alone:
+check the explicit log result. Stop on any result other than `owner-created`
+or an expected `already-applied`, and do not remove history to bypass the guard.
 
 ## Owner steps
 

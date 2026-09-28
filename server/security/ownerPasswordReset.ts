@@ -2,7 +2,15 @@ import bcrypt from "bcryptjs";
 import type Database from "better-sqlite3";
 
 const OWNER_EMAIL = "ryan@myshepherdapp.church";
-type ResetResult = "disabled" | "invalid-configuration" | "owner-unavailable" | "already-applied" | "applied" | "failed";
+type ResetResult = "disabled" | "invalid-configuration" | "owner-unavailable" | "already-applied" | "applied" | "owner-created" | "bootstrap-refused" | "failed";
+
+function ensureResetAuditTable(sqlite: Database.Database) {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS owner_password_reset_audit (
+    reset_id TEXT PRIMARY KEY,
+    admin_id INTEGER NOT NULL,
+    applied_at TEXT NOT NULL
+  )`);
+}
 
 /**
  * Operator-only startup recovery. No HTTP endpoint; Railway variable access
@@ -15,6 +23,7 @@ export function applyOwnerPasswordReset(
 ): ResetResult {
   const resetId = env.OWNER_PASSWORD_RESET_ID;
   const password = env.OWNER_PASSWORD_RESET_PASSWORD;
+  const createFirstOwner = env.OWNER_PASSWORD_RESET_ALLOW_FIRST_OWNER === "true";
   // Remove plaintext from the process environment as soon as it is read.
   // The operator must still delete the saved Railway variables after recovery.
   delete env.OWNER_PASSWORD_RESET_PASSWORD;
@@ -31,6 +40,32 @@ export function applyOwnerPasswordReset(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'admin_users'",
       ).get();
       if (!exists) return "owner-unavailable";
+      if (createFirstOwner) {
+        // This mode never resets/promotes/reactivates any existing account.
+        // Serialize the empty-table check and insert in the enclosing immediate
+        // transaction so concurrent startups cannot create multiple owners.
+        const auditExists = sqlite.prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'owner_password_reset_audit'",
+        ).get();
+        if (auditExists) {
+          if (sqlite.prepare("SELECT reset_id FROM owner_password_reset_audit WHERE reset_id = ?").get(resetId)) {
+            return "already-applied";
+          }
+          if (sqlite.prepare("SELECT reset_id FROM owner_password_reset_audit LIMIT 1").get()) {
+            return "bootstrap-refused";
+          }
+        }
+        if (sqlite.prepare("SELECT id FROM admin_users LIMIT 1").get()) return "bootstrap-refused";
+        const now = new Date().toISOString();
+        const passwordHash = bcrypt.hashSync(password, 12);
+        const inserted = sqlite.prepare(`INSERT INTO admin_users
+          (email, password_hash, role, created_at, is_active) VALUES (?, ?, 'owner', ?, 1)`)
+          .run(OWNER_EMAIL, passwordHash, now);
+        ensureResetAuditTable(sqlite);
+        sqlite.prepare("INSERT INTO owner_password_reset_audit (reset_id, admin_id, applied_at) VALUES (?, ?, ?)")
+          .run(resetId, inserted.lastInsertRowid, now);
+        return "owner-created";
+      }
       const owners = sqlite.prepare(
         "SELECT id, role, is_active FROM admin_users WHERE lower(email) = ?",
       ).all(OWNER_EMAIL) as Array<{ id: number; role: string; is_active: number }>;
@@ -38,11 +73,7 @@ export function applyOwnerPasswordReset(
         return "owner-unavailable";
       }
       const owner = owners[0];
-      sqlite.exec(`CREATE TABLE IF NOT EXISTS owner_password_reset_audit (
-        reset_id TEXT PRIMARY KEY,
-        admin_id INTEGER NOT NULL,
-        applied_at TEXT NOT NULL
-      )`);
+      ensureResetAuditTable(sqlite);
       if (sqlite.prepare("SELECT reset_id FROM owner_password_reset_audit WHERE reset_id = ?").get(resetId)) {
         return "already-applied";
       }
@@ -74,7 +105,7 @@ export function runOwnerPasswordReset(
 ): ResetResult {
   const result = applyOwnerPasswordReset(sqlite, env);
   if (result !== "disabled") log(`[owner-password-reset] ${result}`);
-  if (result === "owner-unavailable") {
+  if (result === "owner-unavailable" || result === "bootstrap-refused") {
     log(`[owner-password-reset-diagnostic] ${JSON.stringify(inspectOwnerAccount(sqlite))}`);
   }
   return result;
