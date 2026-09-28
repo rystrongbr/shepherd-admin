@@ -39,6 +39,7 @@ export default function Sidebar() {
     path: string;
     badge?: number;
   }> = [
+    { label: "Launch list", icon: Mail, path: "/waitlist" },
     { label: "Deactivations", icon: UserMinus, path: "/deactivations", badge: newDeactivations },
     { label: "Settings",      icon: Settings,  path: "/settings" },
   ];
