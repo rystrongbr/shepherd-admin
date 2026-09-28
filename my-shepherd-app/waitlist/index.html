@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Join the launch list | My Shepherd</title>
+  <meta name="description" content="Scripture for real-life moments, coming to your phone. Join the My Shepherd launch list for email updates. No account or download required.">
+  <meta name="referrer" content="no-referrer">
+  <link rel="canonical" href="https://app.myshepherdapp.church/waitlist/">
+  <meta property="og:title" content="A little more Scripture. A little closer to your day.">
+  <meta property="og:description" content="Join the My Shepherd mobile launch list. Scripture for real-life moments, coming to your phone.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://app.myshepherdapp.church/waitlist/">
+  <meta property="og:image" content="https://app.myshepherdapp.church/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./base.css">
+  <link rel="stylesheet" href="./waitlist.css">
+  <script src="./waitlist.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#signup">Skip to signup</a>
+  <div id="preview-notice" class="preview-notice" hidden>Private preview. Test signups only; no emails are sent.</div>
+  <header class="site-header wrap">
+    <a class="brand" href="https://app.myshepherdapp.church/" target="_blank" rel="noopener noreferrer" aria-label="My Shepherd web app">
+      <svg width="36" height="42" viewBox="0 0 36 42" fill="none" aria-hidden="true">
+        <path d="M15 36V13C15 3 29 3 29 13C29 18 24 20 20 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="M8 36H23" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+      </svg>
+      <span>My Shepherd<span class="brand-caption">SCRIPTURE FOR REAL MOMENTS</span></span>
+    </a>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch color theme">Dark mode</button>
+  </header>
+
+  <main class="wrap">
+    <div class="hero">
+      <section class="intro" aria-labelledby="headline">
+        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> THE MOBILE APP IS ON ITS WAY</p>
+        <h1 id="headline">A little more<br>Scripture.<br><span>A little closer <br>to your day.</span></h1>
+        <p class="lede">For the questions on your heart and the moments in between. Bring Scripture, reflection, and a space to journal into your everyday life.</p>
+        <div class="pillars" aria-label="App features">
+          <span>Ask with honesty</span><span>Read with purpose</span><span>Reflect in peace</span>
+        </div>
+        <aside class="verse">
+          <p>“Thy word is a lamp unto my feet,<br>and a light unto my path.”</p>
+          <span>PSALM 119:105 · KJV</span>
+        </aside>
+      </section>
+
+      <section class="signup-card" id="signup" aria-labelledby="form-title">
+        <div id="signup-panel">
+          <p class="eyebrow">BE THERE FROM THE BEGINNING</p>
+          <h2 id="form-title">Meet your everyday<br>Scripture companion.</h2>
+          <p class="card-intro">Leave your email. We’ll let you know when My Shepherd is ready for your phone.</p>
+          <form id="waitlist-form">
+            <label for="email">Email address <span class="required-note">(required)</span></label>
+            <input id="email" name="email" type="email" autocomplete="email" inputmode="email" maxlength="254" placeholder="you@example.com" required>
+            <label for="first-name">First name <span class="optional">(optional)</span></label>
+            <input id="first-name" name="firstName" autocomplete="given-name" maxlength="80" placeholder="What should we call you?">
+            <fieldset>
+              <legend>Your phone <span class="optional">(optional)</span></legend>
+              <div class="device-options">
+                <label><input type="radio" name="device" value="iphone"><span>iPhone</span></label>
+                <label><input type="radio" name="device" value="android"><span>Android</span></label>
+                <label><input type="radio" name="device" value="" checked><span>No preference</span></label>
+              </div>
+            </fieldset>
+            <div class="trap" aria-hidden="true"><label for="website">Leave empty</label><input id="website" name="website" tabindex="-1" autocomplete="off"></div>
+            <label class="consent"><input id="consent" type="checkbox" required><span>I’m 13 or older and agree to receive My Shepherd launch updates by email. I can unsubscribe anytime.</span></label>
+            <p id="form-error" class="error" role="alert" hidden></p>
+            <button class="primary" id="join-button" type="submit">Notify me at launch <span aria-hidden="true">→</span></button>
+            <p class="small-note">No account. No payment. Just a little anticipation.</p>
+          </form>
+          <noscript><p>Please enable JavaScript to join, or contact myshepherdadmin@gmail.com for help.</p></noscript>
+        </div>
+        <div id="success-panel" tabindex="-1" hidden>
+          <div class="success-symbol" aria-hidden="true">✓</div>
+          <p class="eyebrow">THANK YOU FOR BEING HERE</p>
+          <h2>You’re one step<br>closer.</h2>
+          <p>Your signup request is saved. Watch your inbox for My Shepherd launch updates.</p>
+          <p class="small-note">Already joined? We won’t add you twice. Previously unsubscribed? Your choice stays respected; contact us if you’d like to rejoin.</p>
+          <a class="primary" href="https://app.myshepherdapp.church/" target="_blank" rel="noopener noreferrer">Try My Shepherd on the web <span aria-hidden="true">→</span></a>
+          <p class="small-note">A little Scripture for today, while you wait.</p>
+        </div>
+        <div id="unsubscribe-panel" tabindex="-1" hidden>
+          <p class="eyebrow">YOUR EMAIL PREFERENCES</p>
+          <h2>A little less<br>in your inbox.</h2>
+          <p>Stop receiving My Shepherd launch-list emails. This does not change any app account or subscription.</p>
+          <button id="unsubscribe-button" class="primary" type="button">Unsubscribe from launch updates</button>
+          <p id="unsubscribe-result" role="status"></p>
+        </div>
+        <p class="timing">iPhone and Android availability may differ.<br>We’ll share updates, not promise a release date.</p>
+      </section>
+    </div>
+    <section class="privacy" id="privacy">
+      <details id="privacy-details">
+        <summary>How we care for your information</summary>
+        <p>This launch list is operated by Bar Above LLC. We collect your email, optional first name and phone preference, signup time, consent version, and basic campaign tags from the link you used. No app account is created. This page does not load advertising or analytics scripts.</p>
+        <p>We use this information for My Shepherd launch updates. Railway stores the list; SendGrid delivers emails. You can unsubscribe using the link in an email, or contact <a href="mailto:myshepherdadmin@gmail.com">myshepherdadmin@gmail.com</a> to unsubscribe or request deletion. We retain signup information while needed for the launch list and a limited suppression record to respect opt-outs. We do not sell this information.</p>
+        <p>For ages 13 and up; ages 13–17 should join with a parent or guardian’s permission. Please do not enter sensitive personal details. See our <a href="https://app.myshepherdapp.church/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a> for general service practices; this notice explains the separate launch list.</p>
+      </details>
+    </section>
+  </main>
+  <footer class="wrap footer"><span>© 2026 My Shepherd · Bar Above LLC</span><a href="mailto:myshepherdadmin@gmail.com">Say hello</a><span>Rooted in Scripture. Made for real life.</span></footer>
+</body>
+</html>

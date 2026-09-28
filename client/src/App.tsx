@@ -16,6 +16,7 @@ import InsightsPage from "@/pages/InsightsPage";
 import QuestionsPage from "@/pages/QuestionsPage";
 import DiscoverPage from "@/pages/DiscoverPage";
 import DeactivationsPage from "@/pages/DeactivationsPage";
+import WaitlistPage from "@/pages/WaitlistPage";
 import NotFound from "@/pages/not-found";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 
@@ -51,6 +52,7 @@ export default function App() {
                     <Route path="/questions" component={QuestionsPage} />
                     <Route path="/discover"  component={DiscoverPage} />
                     <Route path="/deactivations" component={DeactivationsPage} />
+                    <Route path="/waitlist" component={WaitlistPage} />
                     <Route path="/settings"  component={SettingsPage} />
                     <Route component={NotFound} />
                   </Switch>

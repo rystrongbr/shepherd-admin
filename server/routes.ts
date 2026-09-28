@@ -51,6 +51,10 @@ import {
 import { anonymousQuestionLimiter, authenticatedQuestionQuota, queueAnthropic } from "./rate-limits";
 import bcrypt from "bcryptjs";
 import { registerReviewerSignin } from "./reviewer-signin";
+import { sqlite } from "./storage";
+import { registerWaitlist } from "./waitlist/routes";
+import { createWaitlistStore } from "./waitlist/store";
+import { sendWaitlistWelcome } from "./waitlist/email";
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
 // Simple token-based auth for the admin dashboard.
@@ -109,6 +113,14 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  registerWaitlist(app, {
+    store: createWaitlistStore(sqlite),
+    sendWelcome: sendWaitlistWelcome,
+    ownerGuard: (req, res, next) => requireAdmin(req, res, () => {
+      if (req.admin?.role !== "owner") return res.status(403).json({ error: "Owner access required." });
+      next();
+    }),
+  });
   app.use("/api", attachUserIfPresent);
   // Apply auth middleware to all /api routes
   app.use("/api", requireAuth);
