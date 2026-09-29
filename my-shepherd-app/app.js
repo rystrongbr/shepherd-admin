@@ -157,6 +157,65 @@ const SIGNUP_RETURN_INTENT_KEY = "signup_return_intent";
 let currentChatId = null;
 // Count of asks this session — triggers the soft signup modal after Q3.
 let questionCount = 0;
+// Last successfully rendered response stays readable if the next request fails.
+// This is browser UI state only, not an allowance or a mobile API change.
+let lastWebAnswer = null;
+
+function webIdentity() { return currentUser?.id ? `user-${currentUser.id}` : "guest"; }
+
+function clearWebQuestionNotice() {
+  document.getElementById("web-question-notice").replaceChildren();
+  if (lastWebAnswer?.identity === webIdentity()) {
+    lastWebAnswer.chatId = currentChatId;
+    lastWebAnswer.reaction = currentChatReaction;
+  }
+}
+
+function showWebQuestionNotice(kind, focus = false) {
+  const host = document.getElementById("web-question-notice");
+  host.innerHTML = WebQuestionLimit.noticeHTML(kind, lastWebAnswer?.identity === webIdentity());
+  if (focus) host.firstElementChild?.focus({ preventScroll: true });
+}
+
+function rememberWebAnswer() {
+  lastWebAnswer = {
+    identity: webIdentity(),
+    nodes: [...document.getElementById("response-content").childNodes],
+    topicHTML: document.getElementById("response-topic-tag").innerHTML,
+    topic: currentTopic, verse: currentVerse,
+    question: v2LastQuestion, response: v2LastResponse,
+    followUps: [...document.querySelectorAll("#follow-up-chips .chip")].map(el => el.dataset.topic),
+  };
+  if (WebQuestionLimit.recordAnswer(webIdentity())) showWebQuestionNotice("invitation");
+}
+
+function handleWebQuestionError(error) {
+  const content = document.getElementById("response-content");
+  if (lastWebAnswer?.identity === webIdentity()) {
+    content.replaceChildren(...lastWebAnswer.nodes);
+    document.getElementById("response-topic-tag").innerHTML = lastWebAnswer.topicHTML;
+    currentTopic = lastWebAnswer.topic;
+    currentVerse = lastWebAnswer.verse;
+    currentChatId = lastWebAnswer.chatId;
+    currentChatReaction = lastWebAnswer.reaction;
+    v2LastQuestion = lastWebAnswer.question;
+    v2LastResponse = lastWebAnswer.response;
+    renderFollowUpChipsFromList(lastWebAnswer.followUps);
+    renderShareButton();
+    renderActionButtons();
+  } else {
+    content.replaceChildren();
+    document.getElementById("response-topic-tag").textContent = "";
+    document.getElementById("follow-up-chips").style.display = "none";
+    document.getElementById("action-btn-row")?.remove();
+    document.getElementById("reaction-btn-row")?.remove();
+    document.getElementById("btn-share-verse")?.remove();
+  }
+  isLoading = false;
+  document.getElementById("response-section").style.display = "block";
+  document.getElementById("btn-ask-another").style.display = "block";
+  showWebQuestionNotice(error?.kind || "unavailable", true);
+}
 // Index of question at which we last showed the signup modal (0 = never).
 // We re-prompt every +5 questions if user dismissed.
 let lastSignupPromptedAt = 0;
@@ -354,30 +413,26 @@ function identityParams() {
 async function fetchAIResponse(topic, question) {
   const params = new URLSearchParams({ topic, question: question || "", ...identityParams() });
   const res = await fetch(`${API_BASE}/api/ai/scripture?${params.toString()}`);
-  if (!res.ok) throw new Error("AI request failed: " + res.status);
-  return res.json();
+  return WebQuestionLimit.readResponse(res);
 }
 
 async function fetchDeeperResponse(topic, question, prevRef) {
   const params = new URLSearchParams({ topic, question: question || "", prevRef: prevRef || "", ...identityParams() });
   const res = await fetch(`${API_BASE}/api/ai/deeper?${params.toString()}`);
-  if (!res.ok) throw new Error("Deeper request failed: " + res.status);
-  return res.json();
+  return WebQuestionLimit.readResponse(res);
 }
 
 // ── v2 fetchers (Sonnet, question-led, multi-citation) ───────────────────────
 async function fetchV2Ask(question, topicHint) {
   const params = new URLSearchParams({ question, topicHint: topicHint || "", ...identityParams() });
   const res = await fetch(`${API_BASE}/api/ai/ask?${params.toString()}`);
-  if (!res.ok) throw new Error("AI v2 request failed: " + res.status);
-  return res.json();
+  return WebQuestionLimit.readResponse(res);
 }
 
 async function fetchV2Passage(originalQuestion, passageRef) {
   const params = new URLSearchParams({ originalQuestion, passageRef });
   const res = await fetch(`${API_BASE}/api/ai/passage?${params.toString()}`);
-  if (!res.ok) throw new Error("AI v2 passage request failed: " + res.status);
-  return res.json();
+  return WebQuestionLimit.readResponse(res);
 }
 
 // HTML-escape user-controlled and model-returned strings before injecting
@@ -472,6 +527,8 @@ function buildCrisisResponseHTML(r) {
 // NOTHING about the user's message is saved on this path.
 function renderCrisisIfPresent(data) {
   if (!data || data.type !== "crisis_safety") return false;
+  lastWebAnswer = null;
+  clearWebQuestionNotice();
   const content = document.getElementById("response-content");
   const chips   = document.getElementById("follow-up-chips");
   document.getElementById("action-btn-row")?.remove();
@@ -491,6 +548,7 @@ function wireV2DrillDowns() {
 
 async function drillDownOnPassage(passageRef) {
   if (isLoading || !v2LastQuestion || !passageRef) return;
+  clearWebQuestionNotice();
   isLoading = true;
 
   const content = document.getElementById("response-content");
@@ -504,14 +562,16 @@ async function drillDownOnPassage(passageRef) {
 
   try {
     const data = await fetchV2Passage(v2LastQuestion, passageRef);
+    if (renderCrisisIfPresent(data)) { isLoading = false; return; }
     v2LastResponse = data;
     content.innerHTML = buildV2ResponseHTML(v2LastQuestion, data);
     wireV2DrillDowns();
     renderFollowUpChipsFromList(data.followUps || []);
     renderShareButton();
+    rememberWebAnswer();
   } catch (err) {
-    console.error("v2 passage drill error:", err.message);
-    content.innerHTML = `<div class="response-error">Sorry, that passage couldn't be loaded right now. Please try again.</div>`;
+    handleWebQuestionError(err);
+    return;
   }
 
   isLoading = false;
@@ -520,6 +580,7 @@ async function drillDownOnPassage(passageRef) {
 
 async function goDeeperOnCurrent() {
   if (isLoading || !currentTopic) return;
+  clearWebQuestionNotice();
   const prevRef = currentVerse?.ref || "";
   const question = document.getElementById("question-input").value.trim();
 
@@ -542,8 +603,8 @@ async function goDeeperOnCurrent() {
   content.innerHTML = `<div class="response-loading"><div class="dot-flashing"><span></span><span></span><span></span></div><p>Going deeper…</p></div>`;
   document.getElementById("response-section").scrollIntoView({ behavior: "smooth", block: "start" });
 
-  // v2 path: re-ask the same question with a deeper framing, biased away
-  // from the passages we already showed. Falls back to v1 if v2 errors.
+  // Re-ask with deeper framing. Never retry a rejected request through another
+  // endpoint or conceal it with static copy: that can consume another quota slot.
   if (USE_AI_V2 && v2LastQuestion) {
     try {
       const priorRefs = (v2LastResponse?.citations || []).map(c => c.ref).join(", ");
@@ -562,10 +623,12 @@ async function goDeeperOnCurrent() {
       if (currentVerse) saveChatToHistory(currentTopic, deeperQuestion, currentVerse, data.answer);
       isLoading = false;
       renderActionButtons();
+      rememberWebAnswer();
       incrementPositive("go_deeper");
       return;
     } catch (err) {
-      console.warn("v2 deeper failed, falling back to v1:", err.message);
+      handleWebQuestionError(err);
+      return false;
     }
   }
 
@@ -579,12 +642,11 @@ async function goDeeperOnCurrent() {
     renderFollowUpChipsFromList(followUps);
     renderShareButton();
     saveChatToHistory(currentTopic, question, verse, reflection);
+    rememberWebAnswer();
     incrementPositive("go_deeper");
   } catch(err) {
-    const fallback = getFallbackResponse(currentTopic);
-    content.innerHTML = buildResponseHTML(currentTopic, question, fallback.verse, fallback.reflection);
-    renderFollowUpChips(currentTopic);
-    renderShareButton();
+    handleWebQuestionError(err);
+    return;
   }
   isLoading = false;
   renderActionButtons();
@@ -1305,6 +1367,7 @@ function topicQuestionSuggestion(topic) {
 
 // ── Response Display ───────────────────────────────────────────────────────
 async function showResponse(topic, question) {
+  clearWebQuestionNotice();
   isLoading = true;
   // Reset reaction + chatId state for this new response. saveChatToHistory will
   // set a new currentChatId once the chat is persisted server-side.
@@ -1356,11 +1419,11 @@ async function showResponse(topic, question) {
       askBtn.style.display = "block";
       isLoading = false;
       renderActionButtons();
+      rememberWebAnswer();
       return;
     } catch (err) {
-      // Fall through to legacy v1 path. Logged so we can spot regressions
-      // in the soft-launch window.
-      console.warn("v2 ask failed, falling back to v1:", err.message);
+      handleWebQuestionError(err);
+      return false;
     }
   }
 
@@ -1379,6 +1442,7 @@ async function showResponse(topic, question) {
     renderFollowUpChipsFromList(followUps);
     renderShareButton();
     saveChatToHistory(topic, question, verse, reflection);
+    rememberWebAnswer();
     // Admin Q&A dashboard — log the response payload for all traffic.
     if (question) {
       logInsight(topic, question, {
@@ -1388,19 +1452,8 @@ async function showResponse(topic, question) {
       });
     }
   } catch (err) {
-    console.error("AI error, using fallback:", err.message);
-    const fallback = getFallbackResponse(topic);
-    content.innerHTML = buildResponseHTML(topic, question, fallback.verse, fallback.reflection);
-    renderFollowUpChips(topic);
-    renderShareButton();
-    saveChatToHistory(topic, question, fallback.verse, fallback.reflection);
-    if (question) {
-      logInsight(topic, question, {
-        verseRef:   fallback.verse ? fallback.verse.ref  : "",
-        verseText:  fallback.verse ? fallback.verse.text : "",
-        reflection: fallback.reflection || "",
-      });
-    }
+    handleWebQuestionError(err);
+    return false;
   }
 
   askBtn.style.display = "block";
@@ -1414,6 +1467,8 @@ function renderFollowUpChips(topic) {
 
 function renderFollowUpChipsFromList(followUps) {
   const chips = document.getElementById("follow-up-chips");
+  chips.replaceChildren();
+  chips.style.display = "none";
   if (!followUps.length) return;
   chips.innerHTML = followUps.map(f =>
     `<button class="chip" data-topic="${f}">${f}</button>`
@@ -1549,9 +1604,11 @@ async function handleAsk() {
   questionCount++;
   // logInsight fires inside showResponse() once the response payload is ready,
   // so the admin Q&A dashboard captures the full Q+verse+reflection.
-  await showResponse(topic, q);
-  input.value = "";
-  document.getElementById("char-hint").textContent = "";
+  const completed = await showResponse(topic, q);
+  if (completed !== false) {
+    input.value = "";
+    document.getElementById("char-hint").textContent = "";
+  }
 
   // Soft signup prompt: first show at Q3, then re-prompt every +5 if dismissed.
   maybeShowSignupModal();

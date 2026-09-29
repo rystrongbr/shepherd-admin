@@ -282,6 +282,7 @@
             </button>
           </div>
         </div>
+        <p class="web-question-allowance">Free access includes up to 3 questions daily. Follow-ups, “Go Deeper,” and passage explanations use the same allowance. Paid-plan limits still apply.</p>
         <p class="input-disclosure field-hint">Questions may be shared anonymously to encourage others. Your identity is never shared.</p>
       </section>
 
@@ -294,6 +295,7 @@
         <div class="response-card" id="response-card">
           <div class="response-topic-tag" id="response-topic-tag"></div>
           <div id="response-content" class="response-content"></div>
+          <div id="web-question-notice"></div>
           <div id="follow-up-chips" class="follow-up-chips" style="display:none"></div>
           <button id="btn-ask-another" class="btn-ask-another" style="display:none" data-testid="button-ask-another">Ask another question</button>
         </div>
@@ -368,6 +370,7 @@
   </footer>
 
   <script>document.getElementById("footer-year").textContent = new Date().getFullYear();</script>
+  <script src="web-question-limit.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
