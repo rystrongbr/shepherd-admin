@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { sql } from "drizzle-orm";
 import { db } from "./storage";
+import { effectiveTier, type TierRow } from "./iap/effective-tier";
 
 export type UserClaims = { id: number; email: string; tier: "free" | "plus" | "enterprise" };
 export type AdminClaims = { id: number; email: string; role: string };
@@ -120,7 +121,14 @@ function sendTokens(res: Response, accessToken: string, refreshToken: string, ki
 
 export function issueUserTokens(res: Response, user: UserClaims) {
   ensureAuthTables();
-  return sendTokens(res, userAccessToken(user), createRefresh("user", user.id), "user");
+  const current = { ...user, tier: currentUserTier(user.id, user.tier) };
+  return sendTokens(res, userAccessToken(current), createRefresh("user", user.id), "user");
+}
+
+function currentUserTier(id: number, fallback: UserClaims["tier"]): UserClaims["tier"] {
+  const row = db.get<TierRow>(sql`SELECT tier, subscription_product_id, subscription_expires_at
+    FROM app_users WHERE id = ${id}`);
+  return row ? effectiveTier(row) : fallback;
 }
 
 export function issueAdminTokens(res: Response, admin: AdminClaims) {
@@ -143,7 +151,7 @@ export function requireUser(req: Request, res: Response, next: NextFunction) {
     const claims = jwt.verify(token, secret()) as jwt.JwtPayload;
     if (claims.kind !== "user" || typeof claims.id !== "number" || typeof claims.email !== "string") throw new Error("invalid token");
     const tier = claims.tier === "plus" || claims.tier === "enterprise" ? claims.tier : "free";
-    req.user = { id: claims.id, email: claims.email, tier };
+    req.user = { id: claims.id, email: claims.email, tier: currentUserTier(claims.id, tier) };
     return next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired access token" });
@@ -160,7 +168,7 @@ export function attachUserIfPresent(req: Request, _res: Response, next: NextFunc
       req.user = {
         id: claims.id,
         email: claims.email,
-        tier: claims.tier === "plus" || claims.tier === "enterprise" ? claims.tier : "free",
+        tier: currentUserTier(claims.id, claims.tier === "plus" || claims.tier === "enterprise" ? claims.tier : "free"),
       };
     }
   } catch {

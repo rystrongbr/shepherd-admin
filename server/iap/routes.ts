@@ -9,12 +9,13 @@
 import type { Express } from "express";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "../storage";
+import { db, sqlite } from "../storage";
 import { requireUser, issueUserTokens } from "../auth";
 import { beginIapDiagnostic } from "./diagnostics";
+import { effectiveTier } from "./effective-tier";
+import { persistVerifiedSubscription, SubscriptionOwnershipError } from "./ownership";
 import {
   verifyAppleReceipt,
-  productIdToTier,
   ReceiptVerificationError,
 } from "./apple-verify";
 
@@ -23,6 +24,7 @@ import {
 // the purchase; the receipt (verified with Apple) is the source of truth.
 const verifyRequestSchema = z.object({
   receiptData: z.string().min(10, "receiptData must be a non-empty base64 string"),
+  syncOnly: z.boolean().optional().default(false),
 });
 
 export function registerIapRoutes(app: Express) {
@@ -41,6 +43,7 @@ export function registerIapRoutes(app: Express) {
   // /api/v1/iap/verify-receipt → /api/iap/verify-receipt so mobile clients
   // still call the v1 URL. Same pattern as /api/user/me.
   app.post("/api/iap/verify-receipt", requireUser, async (req, res) => {
+    res.setHeader("Cache-Control", "private, no-store");
     const diagnostic = beginIapDiagnostic(req, res, "verify-receipt");
     const parsed = verifyRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -65,35 +68,17 @@ export function registerIapRoutes(app: Express) {
       throw err;
     }
 
-    const tier = productIdToTier(verified.productId);
-    if (!tier) {
-      // Defensive — a product ID we don't recognize means the App Store
-      // catalog and this server are out of sync. Log loudly, refuse the
-      // grant, and surface a clear error to the client.
-      console.error("[iap] unknown product_id", {
-        userId: req.user!.id,
-        productId: verified.productId,
-      });
-      return res.status(422).json({ error: `Unknown product_id: ${verified.productId}` });
+    let entitlement;
+    try {
+      entitlement = persistVerifiedSubscription(sqlite, req.user!.id, verified, parsed.data.syncOnly);
+    } catch (error) {
+      if (error instanceof SubscriptionOwnershipError) {
+        return res.status(409).json({ error: error.message, code: error.code });
+      }
+      throw error;
     }
-
-    const expiresAt = new Date(verified.expiresDateMs).toISOString();
-    const now = new Date().toISOString();
+    const { tier, expiresAt } = entitlement;
     diagnostic?.recordDecision({ tier, productId: verified.productId, expiresAt });
-
-    // Persist the entitlement. We store expires_at + product_id + original
-    // transaction id so that renewal notifications (v1.1) can look up the
-    // user by original_transaction_id and refresh their expiration.
-    db.run(sql`
-      UPDATE app_users
-      SET
-        tier = ${tier},
-        subscription_product_id = ${verified.productId},
-        subscription_original_txn_id = ${verified.originalTransactionId},
-        subscription_expires_at = ${expiresAt},
-        subscription_updated_at = ${now}
-      WHERE id = ${req.user!.id}
-    `);
 
     // Issue a fresh JWT with the new tier so the mobile client's
     // in-memory user immediately reflects the entitlement without a
@@ -110,6 +95,7 @@ export function registerIapRoutes(app: Express) {
       productId: verified.productId,
       expiresAt,
       environment: verified.environment,
+      subscriptionStatus: verified.subscriptionStatus,
       ...tokens,
     });
   });
@@ -117,13 +103,18 @@ export function registerIapRoutes(app: Express) {
   /**
    * GET /api/v1/iap/entitlement
    *
-   * Cheap read-only check the mobile client hits at app cold-start to
+   * Stored-state check the mobile client hits at app cold-start to
    * confirm the local JWT's tier matches what the server has recorded.
    * Also returns expires_at so the client can show an appropriate UI when
    * a subscription is expiring soon.
    */
   app.get("/api/iap/entitlement", requireUser, (req, res) => {
     const diagnostic = beginIapDiagnostic(req, res, "entitlement");
+    res.setHeader("Cache-Control", "private, no-store");
+    // This account-specific lifecycle response always carries a fresh body,
+    // including for older mobile builds sending conditional cache headers.
+    delete req.headers["if-none-match"];
+    delete req.headers["if-modified-since"];
     const row = db.get<{
       tier: string;
       subscription_product_id: string | null;
@@ -137,22 +128,16 @@ export function registerIapRoutes(app: Express) {
     if (!row) return res.status(404).json({ error: "User not found" });
     diagnostic?.recordStored({ tier: row.tier, originalTransactionId: row.subscription_original_txn_id });
 
-    // If the subscription has expired, downgrade to free on read. This is
-    // a lightweight belt-and-suspenders check for the case where our
-    // renewal-notification handler (v1.1) hasn't caught up yet. A cron
-    // will do the same sweep in bulk once per day.
-    let currentTier = row.tier;
-    if (
-      (row.tier === "plus" || row.tier === "enterprise") &&
-      row.subscription_expires_at &&
-      new Date(row.subscription_expires_at).getTime() < Date.now()
-    ) {
+    // Never extend stored access without renewed Apple evidence. Build 10
+    // reconciles an already-owned receipt on launch/foreground and renewal
+    // events. This route itself does not contact Apple.
+    const currentTier = effectiveTier(row);
+    if (currentTier !== row.tier) {
       db.run(sql`
         UPDATE app_users
         SET tier = 'free', subscription_updated_at = ${new Date().toISOString()}
         WHERE id = ${req.user!.id}
       `);
-      currentTier = "free";
     }
 
     diagnostic?.recordDecision({
@@ -164,6 +149,7 @@ export function registerIapRoutes(app: Express) {
       tier: currentTier,
       productId: row.subscription_product_id ?? null,
       expiresAt: row.subscription_expires_at ?? null,
+      hasVerifiedSubscription: Boolean(row.subscription_original_txn_id),
     });
   });
 }

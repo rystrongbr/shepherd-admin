@@ -47,7 +47,8 @@ export function summarizeAppleResponse(value: unknown) {
   const receipt = object(response.receipt);
   const transactions = response.latest_receipt_info ?? receipt.in_app;
   const entries = Array.isArray(transactions) ? transactions.map(object) : [];
-  // Match the existing verifier's selection, without changing its decision.
+  // Raw-history summary, not the lifecycle evaluator's final selection.
+  // A refunded/upgraded long-duration item can differ from current access.
   const selected = entries.slice().sort((a, b) =>
     Number(b.expires_date_ms ?? 0) - Number(a.expires_date_ms ?? 0))[0] ?? {};
   const pending = Array.isArray(response.pending_renewal_info)
@@ -59,6 +60,7 @@ export function summarizeAppleResponse(value: unknown) {
   const expiry = milliseconds(selected.expires_date_ms);
   const intent = Number(renewal?.expiration_intent);
   return {
+    historySelection: "highest-expiry-not-entitlement",
     appleStatus: typeof response.status === "number" && Number.isInteger(response.status)
       ? response.status : null,
     environment: response.environment === "Sandbox" || response.environment === "Production"

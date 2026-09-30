@@ -56,6 +56,9 @@ export interface VerifiedReceipt {
   expiresDateMs: number;
   isTrialPeriod: boolean;
   environment: "Production" | "Sandbox";
+  entitlementTier: "free" | EntitledTier;
+  subscriptionStatus: "active" | "grace" | "expired" | "revoked" | "upgraded";
+  accessExpiresDateMs: number;
 }
 
 export class ReceiptVerificationError extends Error {
@@ -68,10 +71,9 @@ export class ReceiptVerificationError extends Error {
 /**
  * Verify a base64-encoded receipt with Apple.
  *
- * Returns the LATEST auto-renewable subscription transaction in the receipt,
- * which is the one whose expiration date determines the user's current
- * entitlement. Older transactions in the same receipt are ignored — they're
- * always superseded by the latest_receipt_info entry.
+ * Resolves the currently valid subscription, or real historical transaction
+ * when none grants access. Expiration, refunds, upgrades and grace periods
+ * are evaluated separately from Apple's receipt authenticity status.
  *
  * Throws ReceiptVerificationError on:
  *  - Missing APPLE_SHARED_SECRET env var (misconfigured server, not a user error)
@@ -120,31 +122,73 @@ export async function verifyAppleReceipt(
     );
   }
 
-  // Prefer latest_receipt_info (the auto-renewable subscription history).
-  // Fall back to in_app for older receipt formats. We take the entry with
-  // the newest expires_date_ms — that's the current subscription state.
+  return resolveAppleReceipt(response);
+}
+
+/** Receipt authenticity and current paid access are different decisions. */
+export function resolveAppleReceipt(response: AppleResponse, now = Date.now()): VerifiedReceipt {
+  if (response.status !== STATUS_OK) throw new ReceiptVerificationError("Receipt status is not valid", response.status);
+  if (response.receipt?.bundle_id !== "church.myshepherdapp") {
+    throw new ReceiptVerificationError("Receipt does not belong to this app");
+  }
+  if (response.environment !== "Sandbox" && response.environment !== "Production") {
+    throw new ReceiptVerificationError("Receipt environment is missing or invalid");
+  }
   const transactions = response.latest_receipt_info ?? response.receipt?.in_app ?? [];
   if (!Array.isArray(transactions) || transactions.length === 0) {
     throw new ReceiptVerificationError("Receipt contains no subscription transactions");
   }
 
-  const latest = transactions
-    .slice()
-    .sort((a, b) => Number(b.expires_date_ms ?? 0) - Number(a.expires_date_ms ?? 0))[0];
-
-  if (!latest.product_id || !latest.transaction_id) {
-    throw new ReceiptVerificationError("Receipt transaction is missing required fields");
+  const candidates: VerifiedReceipt[] = [];
+  for (const entry of transactions) {
+    const paidTier = typeof entry.product_id === "string" ? productIdToTier(entry.product_id) : null;
+    if (!paidTier) continue;
+    const identifier = (value: unknown): value is string =>
+      typeof value === "string" && value.length > 0 && value.length <= 256;
+    const date = (value: unknown): number => {
+      const n = typeof value === "string" || typeof value === "number" ? Number(value) : NaN;
+      if (!Number.isFinite(n) || n <= 0 || n >= 4_102_444_800_000) {
+        throw new ReceiptVerificationError("Receipt transaction has an invalid date");
+      }
+      return n;
+    };
+    if (!identifier(entry.transaction_id) || !identifier(entry.original_transaction_id)) {
+      throw new ReceiptVerificationError("Receipt transaction is missing required identifiers");
+    }
+    const purchaseDateMs = date(entry.purchase_date_ms);
+    const expiresDateMs = date(entry.expires_date_ms);
+    if (purchaseDateMs > now + 300_000 || expiresDateMs < purchaseDateMs) {
+      throw new ReceiptVerificationError("Receipt transaction dates are inconsistent");
+    }
+    const revoked = entry.cancellation_date !== undefined || entry.cancellation_date_ms !== undefined;
+    const upgraded = entry.is_upgraded === "true" || entry.is_upgraded === true;
+    const renewal = response.pending_renewal_info?.find(row =>
+      row.original_transaction_id === entry.original_transaction_id &&
+      row.product_id === entry.product_id);
+    const grace = renewal?.grace_period_expires_date_ms === undefined
+      ? null : date(renewal.grace_period_expires_date_ms);
+    const inGrace = !revoked && !upgraded && expiresDateMs <= now &&
+      grace !== null && grace > now;
+    const active = !revoked && !upgraded && (expiresDateMs > now || inGrace);
+    candidates.push({
+      productId: entry.product_id!,
+      transactionId: entry.transaction_id,
+      originalTransactionId: entry.original_transaction_id,
+      purchaseDateMs, expiresDateMs,
+      isTrialPeriod: entry.is_trial_period === "true" || entry.is_trial_period === true,
+      environment: response.environment,
+      entitlementTier: active ? paidTier : "free",
+      subscriptionStatus: revoked ? "revoked" : upgraded ? "upgraded"
+        : inGrace ? "grace" : active ? "active" : "expired",
+      accessExpiresDateMs: inGrace ? grace! : expiresDateMs,
+    });
   }
-
-  return {
-    productId: String(latest.product_id),
-    transactionId: String(latest.transaction_id),
-    originalTransactionId: String(latest.original_transaction_id ?? latest.transaction_id),
-    purchaseDateMs: Number(latest.purchase_date_ms ?? 0),
-    expiresDateMs: Number(latest.expires_date_ms ?? 0),
-    isTrialPeriod: latest.is_trial_period === "true" || latest.is_trial_period === true,
-    environment: response.environment === "Sandbox" ? "Sandbox" : "Production",
-  };
+  if (!candidates.length) throw new ReceiptVerificationError("Receipt contains no recognized subscription transactions");
+  // Never allow an old refunded/upgraded annual transaction to eclipse a
+  // currently valid subscription. Without active access, retain real history.
+  const active = candidates.filter(entry => entry.entitlementTier !== "free");
+  return (active.length ? active : candidates)
+    .sort((a, b) => b.purchaseDateMs - a.purchaseDateMs || b.expiresDateMs - a.expiresDateMs)[0];
 }
 
 /**
@@ -157,6 +201,7 @@ async function postToApple(url: string, body: unknown): Promise<AppleResponse> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {
     throw new ReceiptVerificationError(
@@ -168,11 +213,17 @@ async function postToApple(url: string, body: unknown): Promise<AppleResponse> {
 
 // Shape of the JSON Apple returns. Typed loosely because their field set
 // evolves over time and we only pull the pieces we know about.
-interface AppleResponse {
+export interface AppleResponse {
   status: number;
   environment?: "Production" | "Sandbox";
   latest_receipt_info?: AppleTransaction[];
-  receipt?: { in_app?: AppleTransaction[] };
+  receipt?: { bundle_id?: string; in_app?: AppleTransaction[] };
+  pending_renewal_info?: {
+    original_transaction_id?: string;
+    product_id?: string;
+    grace_period_expires_date_ms?: string | number;
+    auto_renew_status?: string;
+  }[];
 }
 
 interface AppleTransaction {
@@ -182,4 +233,7 @@ interface AppleTransaction {
   purchase_date_ms?: string | number;
   expires_date_ms?: string | number;
   is_trial_period?: string | boolean;
+  cancellation_date?: string;
+  cancellation_date_ms?: string | number;
+  is_upgraded?: string | boolean;
 }
