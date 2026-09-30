@@ -11,6 +11,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../storage";
 import { requireUser, issueUserTokens } from "../auth";
+import { beginIapDiagnostic } from "./diagnostics";
 import {
   verifyAppleReceipt,
   productIdToTier,
@@ -40,6 +41,7 @@ export function registerIapRoutes(app: Express) {
   // /api/v1/iap/verify-receipt → /api/iap/verify-receipt so mobile clients
   // still call the v1 URL. Same pattern as /api/user/me.
   app.post("/api/iap/verify-receipt", requireUser, async (req, res) => {
+    const diagnostic = beginIapDiagnostic(req, res, "verify-receipt");
     const parsed = verifyRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" });
@@ -47,7 +49,7 @@ export function registerIapRoutes(app: Express) {
 
     let verified;
     try {
-      verified = await verifyAppleReceipt(parsed.data.receiptData);
+      verified = await verifyAppleReceipt(parsed.data.receiptData, diagnostic?.observeApple);
     } catch (err) {
       if (err instanceof ReceiptVerificationError) {
         // 402 lets the mobile client distinguish "your receipt didn't verify"
@@ -77,6 +79,7 @@ export function registerIapRoutes(app: Express) {
 
     const expiresAt = new Date(verified.expiresDateMs).toISOString();
     const now = new Date().toISOString();
+    diagnostic?.recordDecision({ tier, productId: verified.productId, expiresAt });
 
     // Persist the entitlement. We store expires_at + product_id + original
     // transaction id so that renewal notifications (v1.1) can look up the
@@ -120,16 +123,19 @@ export function registerIapRoutes(app: Express) {
    * a subscription is expiring soon.
    */
   app.get("/api/iap/entitlement", requireUser, (req, res) => {
+    const diagnostic = beginIapDiagnostic(req, res, "entitlement");
     const row = db.get<{
       tier: string;
       subscription_product_id: string | null;
       subscription_expires_at: string | null;
+      subscription_original_txn_id: string | null;
     }>(sql`
-      SELECT tier, subscription_product_id, subscription_expires_at
+      SELECT tier, subscription_product_id, subscription_expires_at, subscription_original_txn_id
       FROM app_users
       WHERE id = ${req.user!.id}
     `);
     if (!row) return res.status(404).json({ error: "User not found" });
+    diagnostic?.recordStored({ tier: row.tier, originalTransactionId: row.subscription_original_txn_id });
 
     // If the subscription has expired, downgrade to free on read. This is
     // a lightweight belt-and-suspenders check for the case where our
@@ -149,6 +155,11 @@ export function registerIapRoutes(app: Express) {
       currentTier = "free";
     }
 
+    diagnostic?.recordDecision({
+      tier: currentTier,
+      productId: row.subscription_product_id,
+      expiresAt: row.subscription_expires_at,
+    });
     return res.json({
       tier: currentTier,
       productId: row.subscription_product_id ?? null,
