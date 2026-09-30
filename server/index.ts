@@ -8,10 +8,15 @@ import path from "path";
 import helmet from "helmet";
 import { sqlite } from "./storage";
 import { runOwnerPasswordReset } from "./security/ownerPasswordReset";
+import { provisionExpiredReviewerDemo } from "./security/expiredReviewerDemo";
 
 // Explicit operator recovery only. With no reset variables this does nothing.
 // Runs before serving requests; never changes consumer/reviewer credentials.
 runOwnerPasswordReset(sqlite);
+const expiredReviewerResult = provisionExpiredReviewerDemo(sqlite);
+if (expiredReviewerResult !== "disabled") {
+  console.log(`[expired-reviewer-demo] ${expiredReviewerResult}`);
+}
 
 const app = express();
 const httpServer = createServer(app);
