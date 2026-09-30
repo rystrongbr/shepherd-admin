@@ -9,15 +9,17 @@ process.env.DB_PATH = ":memory:";
 process.env.JWT_SECRET = "iap-diagnostic-isolated-test-secret-not-production";
 process.env.APPLE_SHARED_SECRET = "PRIVATE_SHARED_SECRET";
 
-test("actual IAP routes preserve status, body, caching and tier decisions with diagnostics off/on", async () => {
+test("diagnostics remain observational with validated tiers, ownership and fresh entitlement bodies", async () => {
   const { registerIapRoutes } = await import("./routes");
   const { verifyAppleReceipt } = await import("./apple-verify");
+  const { requireUser } = await import("../auth");
   const { storage, sqlite } = await import("../storage");
   const target = storage.createUser({ email: "apple-review+free@myshepherdapp.church", tier: "free" });
   const other = storage.createUser({ email: "non-reviewer@example.com", tier: "free" });
   const app = express();
   app.use(express.json());
   registerIapRoutes(app);
+  app.get("/protected-tier", requireUser, (req, res) => res.json({ tier: req.user!.tier }));
   const server = createServer(app);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -40,7 +42,7 @@ test("actual IAP routes preserve status, body, caching and tier decisions with d
       latest_receipt_info: [{
         product_id: "church.myshepherdapp.plus.monthly",
         transaction_id: "PRIVATE_TRANSACTION", original_transaction_id: "PRIVATE_ORIGINAL",
-        purchase_date_ms: String(Date.now() - 1000), expires_date_ms: String(expiry),
+        purchase_date_ms: String(Date.now() - 2 * 86_400_000), expires_date_ms: String(expiry),
       }],
       pending_renewal_info: [{ original_transaction_id: "PRIVATE_ORIGINAL", auto_renew_status: "1" }],
     } : { status: 21007 }), { status: 200 });
@@ -82,33 +84,40 @@ test("actual IAP routes preserve status, body, caching and tier decisions with d
     const get = await call("GET", "/api/iap/entitlement");
     assert.equal(get.status, 200);
     assert.equal(get.body.tier, "plus");
-    assert.equal(get.headers["cache-control"], undefined);
+    assert.equal(get.headers["cache-control"], "private, no-store");
     const cached = await call("GET", "/api/iap/entitlement", target, { "If-None-Match": get.headers.etag });
-    assert.equal(cached.status, 304);
-    assert.equal(cached.body, null);
+    assert.equal(cached.status, 200);
+    assert.equal(cached.body.tier, "plus");
     const cachedLog = JSON.parse(logs.at(-1)!);
-    assert.equal(cachedLog.httpStatus, 304);
+    assert.equal(cachedLog.httpStatus, 200);
     assert.equal(cachedLog.ifNoneMatchPresent, true);
     assert.equal(cachedLog.decision.tier, "plus");
     assert.equal(cachedLog.storedOriginalTransactionFingerprint, entry.apple.originalTransactionFingerprint);
     delete process.env.IAP_REVIEW_DIAGNOSTICS;
     const cachedOff = await call("GET", "/api/iap/entitlement", target, { "If-None-Match": get.headers.etag });
-    assert.equal(cachedOff.status, 304);
+    assert.equal(cachedOff.status, 200);
     assert.equal(cachedOff.headers.etag, cached.headers.etag);
 
     process.env.IAP_REVIEW_DIAGNOSTICS = "true";
     const count = logs.length;
-    await call("POST", "/api/iap/verify-receipt", other);
+    assert.equal((await call("POST", "/api/iap/verify-receipt", other)).status, 409);
     await call("GET", "/api/iap/entitlement", other);
     assert.equal(logs.length, count);
     expiry = Date.now() - 86_400_000;
     const expired = await call("POST", "/api/iap/verify-receipt");
-    // Deliberately document, not fix, the existing inconsistent expiry behavior.
-    assert.equal(expired.body.tier, "plus");
+    assert.equal(expired.body.tier, "free");
+    assert.equal((jwt.decode(expired.body.accessToken) as jwt.JwtPayload).tier, "free");
     assert.equal(JSON.parse(logs.at(-1)!).apple.expiryInPast, true);
     const expiredGet = await call("GET", "/api/iap/entitlement");
     assert.equal(expiredGet.body.tier, "free");
     assert.equal(JSON.parse(logs.at(-1)!).decision.tier, "free");
+    const staleToken = await call("GET", "/protected-tier", target, { Authorization: `Bearer ${on.body.accessToken}` });
+    assert.equal(staleToken.body.tier, "free");
+    // A later real renewal for the same original transaction restores access.
+    expiry = Date.now() + 86_400_000;
+    const renewed = await call("POST", "/api/iap/verify-receipt");
+    assert.equal(renewed.body.tier, "plus");
+    assert.equal((jwt.decode(renewed.body.accessToken) as jwt.JwtPayload).tier, "plus");
     appleStatus = 21002;
     assert.equal((await call("POST", "/api/iap/verify-receipt")).status, 402);
     assert.equal(JSON.parse(logs.at(-1)!).apple.appleStatus, 21002);

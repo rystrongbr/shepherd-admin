@@ -340,6 +340,14 @@ addColumnIfMissing("app_users",      "subscription_product_id",        "TEXT");
 addColumnIfMissing("app_users",      "subscription_original_txn_id",   "TEXT");
 addColumnIfMissing("app_users",      "subscription_expires_at",        "TEXT");
 addColumnIfMissing("app_users",      "subscription_updated_at",        "TEXT");
+// Additive ownership registry. Populated on verified purchase/restore only;
+// creating it never rewrites existing accounts or their canceled subscriptions.
+sqlite.exec(`CREATE TABLE IF NOT EXISTS iap_transaction_owners (
+  environment TEXT NOT NULL,
+  original_transaction_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  PRIMARY KEY (environment, original_transaction_id)
+)`);
 addColumnIfMissing("campaigns",      "meta",               "TEXT NOT NULL DEFAULT '{}'");
 // Q&A admin dashboard — capture verse + reflection for ALL traffic (anon +
 // signed-in) so the /questions page can show the full response, not just the
