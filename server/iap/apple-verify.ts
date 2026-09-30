@@ -11,6 +11,8 @@
  * https://developer.apple.com/documentation/appstorereceipts/verifyreceipt
  */
 
+import { summarizeAppleResponse, type ReceiptDiagnostic } from "./diagnostics";
+
 const APPLE_PROD_URL = "https://buy.itunes.apple.com/verifyReceipt";
 const APPLE_SANDBOX_URL = "https://sandbox.itunes.apple.com/verifyReceipt";
 
@@ -79,7 +81,10 @@ export class ReceiptVerificationError extends Error {
  *  - Product ID we don't recognize (defensive — should never happen if the
  *    IAP catalog and this file stay in sync)
  */
-export async function verifyAppleReceipt(receiptData: string): Promise<VerifiedReceipt> {
+export async function verifyAppleReceipt(
+  receiptData: string,
+  onDiagnostic?: (summary: ReceiptDiagnostic) => void,
+): Promise<VerifiedReceipt> {
   const sharedSecret = process.env.APPLE_SHARED_SECRET;
   if (!sharedSecret) {
     throw new ReceiptVerificationError(
@@ -101,6 +106,11 @@ export async function verifyAppleReceipt(receiptData: string): Promise<VerifiedR
 
   if (response.status === STATUS_SANDBOX_RECEIPT_ON_PROD) {
     response = await postToApple(APPLE_SANDBOX_URL, body);
+  }
+
+  if (onDiagnostic) {
+    try { onDiagnostic(summarizeAppleResponse(response)); }
+    catch { /* Diagnostics cannot change verification behavior. */ }
   }
 
   if (response.status !== STATUS_OK) {
