@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 
 const paidEmail = "apple-review@myshepherdapp.church";
 const freeEmail = "apple-review+free@myshepherdapp.church";
+const expiredEmail = "apple-review+expired@myshepherdapp.church";
 // Test-only credentials, never production configuration.
 const paidPassword = "test-only-enterprise-password";
 const freePassword = "test-only-free-password";
@@ -93,6 +94,20 @@ test("wrong passwords, unknown emails, prototype keys, and malformed inputs fail
     }
     assert.equal(f.issued.length, 0);
   } finally { await f.close(); }
+});
+
+test("optional expired reviewer requires its own configured hash; existing accounts still work", async () => {
+  const absent = await fixture();
+  try {
+    assert.equal((await absent.post({ email: expiredEmail, password: freePassword })).response.status, 503);
+    assert.equal((await absent.post({ email: freeEmail, password: freePassword })).response.status, 200);
+  } finally { await absent.close(); }
+  const configured = await fixture({ REVIEWER_EXPIRED_PASSWORD_HASH: env.REVIEWER_FREE_PASSWORD_HASH });
+  try {
+    assert.equal((await configured.post({ email: expiredEmail, password: freePassword })).response.status, 200);
+    assert.equal((configured.issued.at(-1) as { tier: string }).tier, "free");
+    assert.equal((await configured.post({ email: expiredEmail, password: paidPassword })).response.status, 401);
+  } finally { await configured.close(); }
 });
 
 test("disabled or missing/malformed hash configuration fails closed", async () => {

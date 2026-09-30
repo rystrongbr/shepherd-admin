@@ -15,6 +15,7 @@ process.env.OPENAI_API_KEY = "test-only-not-a-real-api-key";
 process.env.ENABLE_REVIEWER_SIGNIN = "true";
 process.env.REVIEWER_ENTERPRISE_PASSWORD_HASH = bcrypt.hashSync("test-paid-password-only", 12);
 process.env.REVIEWER_FREE_PASSWORD_HASH = bcrypt.hashSync("test-free-password-only", 12);
+process.env.REVIEWER_EXPIRED_PASSWORD_HASH = bcrypt.hashSync("test-expired-password-only", 12);
 
 test("production routing: reviewer tokens, tier access, refresh, and magic-link coexistence", async () => {
   const { registerRoutes } = await import("./routes");
@@ -25,6 +26,11 @@ test("production routing: reviewer tokens, tier access, refresh, and magic-link 
   const free = storage.createUser({
     email: "apple-review+free@myshepherdapp.church", name: "Review Free", tier: "free",
   });
+  const { provisionExpiredReviewerDemo } = await import("./security/expiredReviewerDemo");
+  assert.equal(provisionExpiredReviewerDemo(sqlite, {
+    ...process.env, PROVISION_EXPIRED_REVIEWER_DEMO: "true",
+  }), "created");
+  const expired = storage.getUserByEmail("apple-review+expired@myshepherdapp.church")!;
   const app = express();
   app.use(express.json());
   // Same URL rewrite as the production entry point.
@@ -49,6 +55,7 @@ test("production routing: reviewer tokens, tier access, refresh, and magic-link 
     for (const [user, password, tier] of [
       [paid, "test-paid-password-only", "enterprise"],
       [free, "test-free-password-only", "free"],
+      [expired, "test-expired-password-only", "free"],
     ] as const) {
       const response = await post("/user/reviewer-signin", { email: user.email, password });
       assert.equal(response.status, 200);
@@ -60,7 +67,13 @@ test("production routing: reviewer tokens, tier access, refresh, and magic-link 
       assert.equal((await get("/user/me", session.accessToken)).status, 200);
       const entitlement = await get("/iap/entitlement", session.accessToken);
       assert.equal(entitlement.status, 200);
-      assert.equal((await entitlement.json()).tier, tier);
+      const entitlementBody = await entitlement.json();
+      assert.equal(entitlementBody.tier, tier);
+      if (user === expired) {
+        assert.equal(entitlementBody.productId, "church.myshepherdapp.plus.monthly");
+        assert.ok(Date.parse(entitlementBody.expiresAt) < Date.now());
+        assert.equal(user.subscriptionOriginalTxnId, null);
+      }
       // Consumer demo accounts must never gain admin privileges.
       assert.equal((await get("/demo/status", session.accessToken)).status, 401);
       const refreshed = await post("/user/refresh", { refreshToken: session.refreshToken });
@@ -75,6 +88,14 @@ test("production routing: reviewer tokens, tier access, refresh, and magic-link 
       email: free.email, password: "test-free-password-only", tier: "enterprise",
     })).json();
     assert.equal((jwt.verify(upgraded.accessToken, process.env.JWT_SECRET!) as jwt.JwtPayload).tier, "plus");
+    storage.updateUser(expired.id, { tier: "plus", subscriptionExpiresAt: "2030-01-01T00:00:00Z" });
+    assert.equal(provisionExpiredReviewerDemo(sqlite, {
+      ...process.env, PROVISION_EXPIRED_REVIEWER_DEMO: "true",
+    }), "preserved-existing");
+    const expiredUpgraded = await (await post("/user/reviewer-signin", {
+      email: expired.email, password: "test-expired-password-only",
+    })).json();
+    assert.equal((jwt.verify(expiredUpgraded.accessToken, process.env.JWT_SECRET!) as jwt.JwtPayload).tier, "plus");
 
     // Existing magic token verification is unchanged, including single-use.
     storage.setMagicToken("normal-customer@example.com", "test-magic-token", new Date(Date.now() + 60_000).toISOString());

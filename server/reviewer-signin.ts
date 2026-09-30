@@ -7,6 +7,7 @@ import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 export const REVIEWER_ACCOUNTS = {
   "apple-review@myshepherdapp.church": "REVIEWER_ENTERPRISE_PASSWORD_HASH",
   "apple-review+free@myshepherdapp.church": "REVIEWER_FREE_PASSWORD_HASH",
+  "apple-review+expired@myshepherdapp.church": "REVIEWER_EXPIRED_PASSWORD_HASH",
 } as const;
 
 type ReviewerUser = {
@@ -24,7 +25,7 @@ type Dependencies = {
 };
 
 // Cost 12 only: rejects plaintext and accidental/unsafe bcrypt cost settings.
-const validHash = (value: string | undefined): value is string =>
+export const validReviewerHash = (value: string | undefined): value is string =>
   typeof value === "string" && /^\$2[aby]\$12\$[./A-Za-z0-9]{53}$/.test(value);
 const invalidCredentials = { error: "Invalid reviewer email or password." };
 const unavailable = { error: "Reviewer sign-in is unavailable. Please contact support." };
@@ -60,7 +61,7 @@ export function registerReviewerSignin(app: Express, deps: Dependencies) {
     }
     const paidHash = env.REVIEWER_ENTERPRISE_PASSWORD_HASH;
     const freeHash = env.REVIEWER_FREE_PASSWORD_HASH;
-    if (!validHash(paidHash) || !validHash(freeHash)) {
+    if (!validReviewerHash(paidHash) || !validReviewerHash(freeHash)) {
       return res.status(503).json(unavailable);
     }
     const { email, password } = req.body ?? {};
@@ -73,7 +74,11 @@ export function registerReviewerSignin(app: Express, deps: Dependencies) {
     const allowed = Object.hasOwn(REVIEWER_ACCOUNTS, normalized);
     // Still perform a bcrypt check for unknown identities; never return tokens
     // for them even if they know a demo password.
-    const hash = normalized === "apple-review+free@myshepherdapp.church" ? freeHash : paidHash;
+    const hash = allowed
+      ? env[REVIEWER_ACCOUNTS[normalized as keyof typeof REVIEWER_ACCOUNTS]]
+      : paidHash;
+    // The optional third account must not disable the two existing logins.
+    if (!validReviewerHash(hash)) return res.status(503).json(unavailable);
     try {
       const matches = await bcrypt.compare(password, hash);
       if (!allowed || !matches) return res.status(401).json(invalidCredentials);
