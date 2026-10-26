@@ -10,17 +10,20 @@
  * window. See the Stage A PR description for the cutover plan.
  *
  * Design choices (locked in by the product map):
- *   1. Model is Claude Sonnet 4.5 via Anthropic SDK. Pinned via env var
- *      ANTHROPIC_MODEL so future model bumps don't require a code change.
+ *   1. Model is pinned via env var ANTHROPIC_MODEL (default Sonnet 4.5,
+ *      which retires 2026-11-30; production moves to claude-sonnet-5-5
+ *      by changing the env var after the eval in scripts/ai-eval.ts).
  *   2. Question-led prompt — the user's question is the primary signal,
  *      and the topic chip (if any) is downgraded to soft hint metadata.
  *      This is what fixes the "canned response from a category" problem.
  *   3. Multi-citation output — answer comes first, then 1–4 supporting
  *      passages. Each citation is its own object so the frontend can
  *      render drill-down per passage.
- *   4. STRICT JSON output via Anthropic's tool-use forcing. We do not
- *      rely on the model emitting valid JSON in free text. A schema-shaped
- *      tool call guarantees structure.
+ *   4. STRICT JSON output via Anthropic structured outputs
+ *      (output_config.format = json_schema). Forced tool_choice is rejected
+ *      by Sonnet 5.5, so we no longer use a forced tool call. Structured
+ *      outputs work on both Sonnet 4.5 and 5.5, which lets us deploy this
+ *      code before flipping the model.
  *   5. KJV-only at the prompt layer. Stage B (a later PR) adds real RAG
  *      grounding against a KJV corpus; this stage relies on Sonnet's
  *      training-data recall of the KJV plus an explicit instruction
@@ -31,11 +34,33 @@ import Anthropic from "@anthropic-ai/sdk";
 // ─── Client + config ──────────────────────────────────────────────────
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
+const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
+const DEFAULT_MAX_TOKENS = 6000;
+const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+type Effort = (typeof EFFORT_LEVELS)[number];
 
-const anthropic = ANTHROPIC_API_KEY
+/** Read at call time so tests and the eval script can override per run. */
+export function aiConfig() {
+  const model = (process.env.ANTHROPIC_MODEL || DEFAULT_MODEL).trim();
+  const parsedMax = Number(process.env.ANTHROPIC_MAX_TOKENS);
+  // Thinking tokens count toward max_tokens on models that think (Sonnet 5.5),
+  // so the old 1500 cap could truncate answers.
+  const maxTokens = Number.isFinite(parsedMax) && parsedMax >= 1000 ? Math.floor(parsedMax) : DEFAULT_MAX_TOKENS;
+  const rawEffort = (process.env.ANTHROPIC_EFFORT || "").trim().toLowerCase();
+  const effort = (EFFORT_LEVELS as readonly string[]).includes(rawEffort) ? (rawEffort as Effort) : undefined;
+  return { model, maxTokens, effort };
+}
+
+type MessagesClient = Pick<Anthropic, "messages">;
+
+let anthropic: MessagesClient | null = ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: ANTHROPIC_API_KEY })
   : null;
+
+/** Test/eval hook: inject a client (or a fake). Not used by production routes. */
+export function setAnthropicClient(client: MessagesClient | null) {
+  anthropic = client;
+}
 
 export function isV2Configured(): boolean {
   return anthropic !== null;
@@ -74,60 +99,61 @@ export interface AskResponse {
   followUps: string[];
 }
 
-// ─── Tool schema (forces structured output) ───────────────────────────
+// ─── Answer schema (structured outputs) ───────────────────────────────
+//
+// Structured outputs support only a subset of JSON Schema: every object
+// needs additionalProperties:false, and arrays allow minItems 0 or 1 only
+// (no maxItems). Counts (1–4 citations, exactly 3 followUps) are enforced
+// in validateResponse() below, and the prompt states them explicitly.
 
-const ANSWER_TOOL = {
-  name: "deliver_pastoral_answer",
-  description:
-    "Deliver a pastoral answer to the user, grounded in supporting KJV passages with explanations of relevance, plus follow-up question suggestions.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      answer: {
-        type: "string",
-        description:
-          "2–5 sentence pastoral answer that engages the user's specific situation. Direct, warm, second-person. Not a sermon.",
-      },
-      citations: {
-        type: "array",
-        minItems: 1,
-        maxItems: 4,
-        items: {
-          type: "object",
-          properties: {
-            ref: {
-              type: "string",
-              description:
-                "KJV reference in canonical form, e.g. 'Philippians 4:6-7'. Must be a real KJV passage; never fabricate.",
-            },
-            text: {
-              type: "string",
-              description:
-                "Exact KJV text of the passage. No paraphrasing. Multiple consecutive verses joined into one paragraph is acceptable.",
-            },
-            relevance: {
-              type: "string",
-              description:
-                "ONE sentence explaining how this specific passage answers the user's specific question. Not a generic reflection.",
-            },
+export const ANSWER_SCHEMA = {
+  type: "object",
+  properties: {
+    answer: {
+      type: "string",
+      description:
+        "2–5 sentence pastoral answer that engages the user's specific situation. Direct, warm, second-person. Not a sermon.",
+    },
+    citations: {
+      type: "array",
+      minItems: 1,
+      description: "1 to 4 supporting KJV passages, most central first.",
+      items: {
+        type: "object",
+        properties: {
+          ref: {
+            type: "string",
+            description:
+              "KJV reference in canonical form, e.g. 'Philippians 4:6-7'. Must be a real KJV passage; never fabricate.",
           },
-          required: ["ref", "text", "relevance"],
+          text: {
+            type: "string",
+            description:
+              "Exact KJV text of the passage. No paraphrasing. Multiple consecutive verses joined into one paragraph is acceptable.",
+          },
+          relevance: {
+            type: "string",
+            description:
+              "ONE sentence explaining how this specific passage answers the user's specific question. Not a generic reflection.",
+          },
         },
-      },
-      followUps: {
-        type: "array",
-        minItems: 3,
-        maxItems: 3,
-        items: {
-          type: "string",
-          description:
-            "A short follow-up question (4–10 words) phrased as an actual question the user might ask next.",
-        },
+        required: ["ref", "text", "relevance"],
+        additionalProperties: false,
       },
     },
-    required: ["answer", "citations", "followUps"],
+    followUps: {
+      type: "array",
+      description: "Exactly 3 short follow-up questions.",
+      items: {
+        type: "string",
+        description:
+          "A short follow-up question (4–10 words) phrased as an actual question the user might ask next.",
+      },
+    },
   },
-};
+  required: ["answer", "citations", "followUps"],
+  additionalProperties: false,
+} as const;
 
 // ─── System prompt ────────────────────────────────────────────────────
 //
@@ -162,7 +188,7 @@ CRITICAL RULES — read carefully, apply every time:
 
 7. FOLLOW-UPS ARE ACTUAL QUESTIONS. Three short questions the person might naturally ask next, in their own voice — not category labels. "How do I forgive when they aren't sorry?" is good. "Forgiveness" is bad.
 
-OUTPUT: Use the deliver_pastoral_answer tool. Do not respond in free text.`;
+OUTPUT: Respond only with the JSON object defined by the response schema: "answer", 1 to 4 "citations", and exactly 3 "followUps". No other text.`;
 
 // ─── Public API ───────────────────────────────────────────────────────
 
@@ -230,31 +256,77 @@ They want to go deeper specifically on ${ref}. Provide a focused answer that:
 
 // ─── Internal helpers ─────────────────────────────────────────────────
 
+export class AiResponseError extends Error {}
+
 async function callAnthropic(userMessage: string): Promise<AskResponse> {
+  // One retry for a malformed/invalid answer (bad JSON, wrong counts,
+  // truncated). API errors (rate limits, 5xx) are not retried here; the SDK
+  // already retries those.
+  try {
+    return await requestAnswer(userMessage, 1);
+  } catch (err) {
+    if (!(err instanceof AiResponseError)) throw err;
+    console.warn(`[ai-v2] invalid answer, retrying once: ${err.message}`);
+    return await requestAnswer(userMessage, 2);
+  }
+}
+
+async function requestAnswer(userMessage: string, attempt: number): Promise<AskResponse> {
+  const { model, maxTokens, effort } = aiConfig();
+  const started = Date.now();
   const response = await anthropic!.messages.create({
-    model: ANTHROPIC_MODEL,
-    max_tokens: 1500,
-    system: SYSTEM_PROMPT,
-    tools: [ANSWER_TOOL],
-    tool_choice: { type: "tool", name: ANSWER_TOOL.name },
+    model,
+    max_tokens: maxTokens,
+    // The system prompt is identical on every request; cache it.
+    system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+    output_config: {
+      format: { type: "json_schema", schema: ANSWER_SCHEMA as unknown as Record<string, unknown> },
+      ...(effort ? { effort } : {}),
+    },
     messages: [{ role: "user", content: userMessage }],
   });
 
-  // Find the tool_use block. With tool_choice forcing a specific tool,
-  // Anthropic will return exactly one tool_use block.
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
-  );
-  if (!toolUse) {
-    throw new Error("Anthropic returned no tool_use block");
-  }
+  logUsage(model, attempt, Date.now() - started, response);
 
-  const parsed = toolUse.input as Partial<AskResponse>;
-  validateResponse(parsed);
-  return parsed as AskResponse;
+  if (response.stop_reason === "max_tokens") {
+    throw new AiResponseError(`answer truncated at max_tokens=${maxTokens}`);
+  }
+  if (response.stop_reason === "refusal") {
+    throw new Error("Anthropic refused to answer");
+  }
+  const textBlock = response.content.find(
+    (block): block is Anthropic.TextBlock => block.type === "text",
+  );
+  if (!textBlock) {
+    throw new AiResponseError("Anthropic returned no text block");
+  }
+  let parsed: Partial<AskResponse>;
+  try {
+    parsed = JSON.parse(textBlock.text) as Partial<AskResponse>;
+  } catch {
+    throw new AiResponseError("Anthropic returned invalid JSON");
+  }
+  try {
+    validateResponse(parsed);
+  } catch (err: any) {
+    throw new AiResponseError(err?.message || "invalid answer");
+  }
+  return parsed;
 }
 
-function validateResponse(r: Partial<AskResponse>): asserts r is AskResponse {
+/** Token + latency log line. Never includes the question or answer text. */
+function logUsage(model: string, attempt: number, ms: number, response: any) {
+  const u = response?.usage || {};
+  const thinking = u.output_tokens_details?.thinking_tokens;
+  console.log(
+    `[ai-v2] usage model=${model} attempt=${attempt} ms=${ms} stop=${response?.stop_reason} ` +
+      `in=${u.input_tokens ?? "?"} out=${u.output_tokens ?? "?"}` +
+      (thinking !== undefined ? ` thinking=${thinking}` : "") +
+      ` cache_read=${u.cache_read_input_tokens ?? 0} cache_write=${u.cache_creation_input_tokens ?? 0}`,
+  );
+}
+
+export function validateResponse(r: Partial<AskResponse>): asserts r is AskResponse {
   if (!r.answer || typeof r.answer !== "string") {
     throw new Error("AI response missing 'answer'");
   }

@@ -5,7 +5,18 @@ import { db } from "./storage";
 
 const CAPACITY_MESSAGE = "We're at capacity right now. Please try again in a moment.";
 const anonymousLimit = Number(process.env.RATE_LIMIT_ANONYMOUS_PER_DAY || 3);
-const maxConcurrent = Number(process.env.ANTHROPIC_MAX_CONCURRENT || 20);
+function positiveInt(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+// Read at construction time; tune in Railway without a code change.
+export function queueConfig() {
+  return {
+    maxConcurrent: positiveInt(process.env.ANTHROPIC_MAX_CONCURRENT, 60),
+    maxQueue: positiveInt(process.env.ANTHROPIC_MAX_QUEUE, 150),
+    waitTimeoutMs: positiveInt(process.env.ANTHROPIC_QUEUE_TIMEOUT_MS, 45_000),
+  };
+}
 
 export const anonymousQuestionLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000,
@@ -65,36 +76,58 @@ export function authenticatedQuestionQuota(req: Request, res: Response, next: Ne
   return next();
 }
 
-class AnthropicQueue {
+export class AnthropicQueue {
   private running = 0;
-  private pending: Array<() => void> = [];
+  private pending: Array<{ start: () => void; timer: ReturnType<typeof setTimeout> }> = [];
+  private readonly maxConcurrent: number;
+  private readonly maxQueue: number;
+  private readonly waitTimeoutMs: number;
+
+  constructor(config = queueConfig()) {
+    this.maxConcurrent = config.maxConcurrent;
+    this.maxQueue = config.maxQueue;
+    this.waitTimeoutMs = config.waitTimeoutMs;
+  }
 
   get depth() {
     return this.pending.length;
   }
 
+  get active() {
+    return this.running;
+  }
+
   async execute<T>(work: () => Promise<T>): Promise<T> {
-    if (this.pending.length > 100) throw new CapacityError();
     await new Promise<void>((resolve, reject) => {
-      if (this.running < maxConcurrent) {
+      if (this.running < this.maxConcurrent) {
         this.running += 1;
         resolve();
         return;
       }
-      if (this.pending.length >= 40) {
+      if (this.pending.length >= this.maxQueue) {
         reject(new CapacityError());
         return;
       }
-      this.pending.push(() => {
-        this.running += 1;
-        resolve();
-      });
+      const entry = {
+        start: () => {
+          clearTimeout(entry.timer);
+          this.running += 1;
+          resolve();
+        },
+        // Don't leave a user hanging: give up after the wait timeout.
+        timer: setTimeout(() => {
+          const i = this.pending.indexOf(entry);
+          if (i !== -1) this.pending.splice(i, 1);
+          reject(new CapacityError());
+        }, this.waitTimeoutMs),
+      };
+      this.pending.push(entry);
     });
     try {
       return await work();
     } finally {
       this.running -= 1;
-      this.pending.shift()?.();
+      this.pending.shift()?.start();
     }
   }
 }

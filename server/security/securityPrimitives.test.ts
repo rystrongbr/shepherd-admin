@@ -10,7 +10,7 @@ const { storage } = await import("../storage.ts");
 const {
   createAdmin, issueUserTokens, requireAdmin, requireUser, verifyGoogleIdToken,
 } = await import("../auth.ts");
-const { anthropicQueue, authenticatedQuestionQuota } = await import("../rate-limits.ts");
+const { AnthropicQueue, authenticatedQuestionQuota } = await import("../rate-limits.ts");
 
 function response() {
   let statusCode = 200;
@@ -71,6 +71,7 @@ test("free user quota rejects the fourth daily request", () => {
 });
 
 test("Anthropic queue holds the 21st job until a slot is released", async () => {
+  const anthropicQueue = new AnthropicQueue({ maxConcurrent: 20, maxQueue: 40, waitTimeoutMs: 60_000 });
   const gates: Array<() => void> = [];
   const jobs = Array.from({ length: 21 }, () => anthropicQueue.execute(() => new Promise<string>(resolve => gates.push(() => resolve("done")))));
   await new Promise(resolve => setTimeout(resolve, 5));
