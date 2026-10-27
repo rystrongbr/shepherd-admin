@@ -51,6 +51,7 @@ import {
 import { anonymousQuestionLimiter, authenticatedQuestionQuota, queueAnthropic } from "./rate-limits";
 import bcrypt from "bcryptjs";
 import { registerReviewerSignin } from "./reviewer-signin";
+import { registerAccountDeletion } from "./account/deletion";
 import { sqlite } from "./storage";
 import { registerWaitlist } from "./waitlist/routes";
 import { createWaitlistStore } from "./waitlist/store";
@@ -132,6 +133,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     findUser: email => storage.getUserByEmail(email),
     issueTokens: issueUserTokens,
   });
+  // In-app account deletion: DELETE /api/user/me (user-scoped; /user/me is in PUBLIC above).
+  registerAccountDeletion(app, { db: sqlite, requireUser });
 
   // Church-prospect signup route (myshepherdapp.church landing page form).
   registerChurchSignupRoute(app);
