@@ -62,6 +62,15 @@ test("request uses structured outputs, not forced tool use", async () => {
   assert.equal(req.system[0].cache_control.type, "ephemeral");
 });
 
+test("system prompt keeps off-topic tasks out but allows light questions", async () => {
+  ai.setAnthropicClient(fakeClient(reply(GOOD)));
+  await ai.ask({ question: "q" });
+  const prompt: string = calls[0].system[0].text;
+  assert.match(prompt, /NOT A GENERAL ASSISTANT/);
+  assert.match(prompt, /no code, no worked solutions, no drafts/);
+  assert.match(prompt, /answer briefly and playfully/);
+});
+
 test("model, max_tokens and effort come from env at call time", async () => {
   process.env.ANTHROPIC_MODEL = "claude-sonnet-5-5";
   process.env.ANTHROPIC_MAX_TOKENS = "8000";

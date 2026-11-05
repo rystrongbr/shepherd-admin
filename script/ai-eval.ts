@@ -6,7 +6,8 @@
  *     --kjv-dir ~/shepherd-mobile/src/data/bible/kjv
  *
  * Options: --limit N (first N questions), --effort low|medium|high,
- *          --concurrency N (default 3), --out DIR (default ./ai-eval-results)
+ *          --concurrency N (default 3), --out DIR (default ./ai-eval-results),
+ *          --kinds edge,crisis (only those question kinds)
  *
  * Writes report.md (for Ryan to read) and results.json. Never prints the key.
  * Crisis questions are first run through the production crisis detector; if
@@ -42,6 +43,8 @@ const outDir = expandHome(arg("out", "ai-eval-results")!);
 const limit = Number(arg("limit", String(EVAL_QUESTIONS.length)));
 const effort = arg("effort");
 const concurrency = Math.max(1, Number(arg("concurrency", "3")));
+const kinds = (arg("kinds") || "").split(",").map(s => s.trim()).filter(Boolean);
+const SELECTED = EVAL_QUESTIONS.filter(q => kinds.length === 0 || kinds.includes(q.kind)).slice(0, limit);
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("ANTHROPIC_API_KEY is not set. Nothing was sent.");
@@ -123,7 +126,7 @@ async function runOne(model: string, q: EvalQuestion): Promise<Row> {
 
 async function runModel(model: string): Promise<Row[]> {
   if (effort) process.env.ANTHROPIC_EFFORT = effort;
-  const qs = EVAL_QUESTIONS.slice(0, limit);
+  const qs = SELECTED;
   const rows: Row[] = [];
   // Usage capture needs one in-flight call at a time per sink; keep it simple
   // and correct: concurrency applies across models, questions run in order.
@@ -159,7 +162,7 @@ function summarize(model: string, rows: Row[]) {
 
 async function main() {
   fs.mkdirSync(outDir, { recursive: true });
-  console.log(`Models: ${models.join(", ")}  |  questions: ${Math.min(limit, EVAL_QUESTIONS.length)}  |  KJV check: ${haveKjv ? "on" : "off"}`);
+  console.log(`Models: ${models.join(", ")}  |  questions: ${SELECTED.length}  |  KJV check: ${haveKjv ? "on" : "off"}`);
   const all: Record<string, Row[]> = {};
   // Run models in parallel (bounded), questions in order within each model.
   const queue = [...models];
@@ -194,7 +197,7 @@ async function main() {
   }
   if (!problems) L.push(`None.`);
   L.push(``, `## Side by side`, ``);
-  for (const q of EVAL_QUESTIONS.slice(0, limit)) {
+  for (const q of SELECTED) {
     L.push(`### ${q.id} (${q.kind})`, ``, `**Q:** ${q.question}${q.passageRef ? `  \n**Go deeper on:** ${q.passageRef}` : ""}`, ``);
     for (const m of models) {
       const r = all[m].find(x => x.id === q.id)!;
