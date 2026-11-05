@@ -126,9 +126,18 @@ export function issueUserTokens(res: Response, user: UserClaims) {
 }
 
 function currentUserTier(id: number, fallback: UserClaims["tier"]): UserClaims["tier"] {
+  return existingUserTier(id) ?? fallback;
+}
+
+/**
+ * Current tier for an existing account, or null when the account no longer
+ * exists (deleted via DELETE /api/user/me). Access tokens live up to 15 minutes,
+ * so this check stops a deleted account from using one in that window.
+ */
+function existingUserTier(id: number): UserClaims["tier"] | null {
   const row = db.get<TierRow>(sql`SELECT tier, subscription_product_id, subscription_expires_at
     FROM app_users WHERE id = ${id}`);
-  return row ? effectiveTier(row) : fallback;
+  return row ? effectiveTier(row) : null;
 }
 
 export function issueAdminTokens(res: Response, admin: AdminClaims) {
@@ -150,8 +159,9 @@ export function requireUser(req: Request, res: Response, next: NextFunction) {
   try {
     const claims = jwt.verify(token, secret()) as jwt.JwtPayload;
     if (claims.kind !== "user" || typeof claims.id !== "number" || typeof claims.email !== "string") throw new Error("invalid token");
-    const tier = claims.tier === "plus" || claims.tier === "enterprise" ? claims.tier : "free";
-    req.user = { id: claims.id, email: claims.email, tier: currentUserTier(claims.id, tier) };
+    const tier = existingUserTier(claims.id);
+    if (!tier) throw new Error("account no longer exists");
+    req.user = { id: claims.id, email: claims.email, tier };
     return next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired access token" });
@@ -165,11 +175,9 @@ export function attachUserIfPresent(req: Request, _res: Response, next: NextFunc
   try {
     const claims = jwt.verify(token, secret()) as jwt.JwtPayload;
     if (claims.kind === "user" && typeof claims.id === "number" && typeof claims.email === "string") {
-      req.user = {
-        id: claims.id,
-        email: claims.email,
-        tier: currentUserTier(claims.id, claims.tier === "plus" || claims.tier === "enterprise" ? claims.tier : "free"),
-      };
+      // A deleted account continues as anonymous on public endpoints.
+      const tier = existingUserTier(claims.id);
+      if (tier) req.user = { id: claims.id, email: claims.email, tier };
     }
   } catch {
     // Protected endpoints give a uniform 401 via requireUser. Public endpoints
