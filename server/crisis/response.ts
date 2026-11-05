@@ -14,6 +14,7 @@
  *   - Suicidal / self-harm / method / acute danger → 988 + Crisis Text Line.
  *   - Abuse disclosures → Childhelp (1-800-422-4453) + RAINN (1-800-656-4673),
  *     NOT 988.
+ *   - Partner / spouse violence → National DV Hotline (1-800-799-7233) + 911.
  */
 
 import type { CrisisCategory } from "./patterns";
@@ -28,6 +29,13 @@ export interface CrisisResource {
   number: string;
   /** Human phrasing for the action, e.g. "call or text 988". Optional. */
   text_action?: string;
+  /**
+   * What the native app shows and dials (it reads `contact`, not `number`).
+   * A phone number, or "Text HOME to 741741" for text lines.
+   */
+  contact: string;
+  /** Short line under the contact in the native app. Optional. */
+  description?: string;
 }
 
 export interface CrisisResources {
@@ -55,6 +63,7 @@ interface CrisisTemplate {
   scripture_secondary: CrisisScripture | null;
   urgency?: CrisisUrgency;
   resources_override?: CrisisResources;
+  trusted_adult_nudge_override?: string;
 }
 
 const CRISIS_RESPONSES: Record<CrisisCategory, CrisisTemplate> = {
@@ -108,15 +117,43 @@ const CRISIS_RESPONSES: Record<CrisisCategory, CrisisTemplate> = {
     },
     scripture_secondary: null,
     resources_override: {
-      primary: { name: "Childhelp National Child Abuse Hotline", number: "1-800-422-4453" },
-      secondary: { name: "RAINN National Sexual Assault Hotline", number: "1-800-656-4673" },
+      primary: { name: "Childhelp National Child Abuse Hotline", number: "1-800-422-4453", contact: "1-800-422-4453", description: "Call or text, 24/7" },
+      secondary: { name: "RAINN National Sexual Assault Hotline", number: "1-800-656-4673", contact: "1-800-656-4673" },
     },
+  },
+  DOMESTIC_VIOLENCE: {
+    acknowledgment:
+      "I hear you. What is happening to you is not okay, and it is not your fault. God does not ask you to stay where you are being harmed. Your safety matters, and you were right to say it out loud.",
+    scripture: {
+      reference: "Psalm 9:9",
+      text: "The LORD also will be a refuge for the oppressed, a refuge in times of trouble.",
+    },
+    scripture_secondary: null,
+    urgency: "HIGH",
+    resources_override: {
+      primary: {
+        name: "National Domestic Violence Hotline",
+        number: "1-800-799-7233",
+        text_action: "call 1-800-799-7233 or text START to 88788",
+        contact: "1-800-799-7233",
+        description: "Call 24/7, or text START to 88788",
+      },
+      secondary: {
+        name: "Emergency services",
+        number: "911",
+        text_action: "call 911 if you are in danger right now",
+        contact: "911",
+        description: "If you are in danger right now",
+      },
+    },
+    trusted_adult_nudge_override:
+      "Please tell one person you trust what you told me: a friend, a family member, a pastor. If it is safe to, save the hotline number somewhere only you can see. You do not have to carry this by yourself.",
   },
 };
 
 const DEFAULT_RESOURCES: CrisisResources = {
-  primary: { name: "988 Suicide & Crisis Lifeline", number: "988", text_action: "call or text 988" },
-  secondary: { name: "Crisis Text Line", number: "741741", text_action: "text HOME to 741741" },
+  primary: { name: "988 Suicide & Crisis Lifeline", number: "988", text_action: "call or text 988", contact: "988", description: "Call or text, 24/7" },
+  secondary: { name: "Crisis Text Line", number: "741741", text_action: "text HOME to 741741", contact: "Text HOME to 741741" },
 };
 
 const TRUSTED_ADULT_NUDGE =
@@ -141,7 +178,7 @@ export function buildCrisisResponse(category: CrisisCategory): CrisisResponse {
     scripture_primary: template.scripture,
     scripture_secondary: template.scripture_secondary,
     resources,
-    trusted_adult_nudge: TRUSTED_ADULT_NUDGE,
+    trusted_adult_nudge: template.trusted_adult_nudge_override || TRUSTED_ADULT_NUDGE,
     footer: FOOTER,
   };
 }

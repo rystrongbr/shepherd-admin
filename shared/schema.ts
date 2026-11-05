@@ -398,7 +398,7 @@ export const crisisSafetySignals = sqliteTable("crisis_safety_signals", {
   // Nullable anonymous browser session id (the app's SESSION_ID). Never PII.
   sessionId: text("session_id"),
   // One of the crisisPatterns categories: ACUTE_DANGER | METHOD_SEEKING |
-  // SUICIDAL_IDEATION | ABUSE_DISCLOSURE | SELF_HARM.
+  // SUICIDAL_IDEATION | DOMESTIC_VIOLENCE | ABUSE_DISCLOSURE | SELF_HARM.
   category: text("category").notNull(),
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
