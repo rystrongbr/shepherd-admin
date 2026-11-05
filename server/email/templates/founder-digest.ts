@@ -17,6 +17,7 @@ const CRISIS_CATEGORY_LABEL: Record<string, string> = {
   ACUTE_DANGER:      "Acute danger",
   METHOD_SEEKING:    "Method seeking",
   SUICIDAL_IDEATION: "Suicidal ideation",
+  DOMESTIC_VIOLENCE: "Domestic violence",
   ABUSE_DISCLOSURE:  "Abuse disclosure",
   SELF_HARM:         "Self-harm",
 };
