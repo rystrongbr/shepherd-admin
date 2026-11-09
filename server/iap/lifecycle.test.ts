@@ -78,7 +78,8 @@ function database() {
   const db = new Database(":memory:");
   db.exec(`CREATE TABLE app_users (
     id INTEGER PRIMARY KEY, tier TEXT, subscription_product_id TEXT,
-    subscription_original_txn_id TEXT, subscription_expires_at TEXT, subscription_updated_at TEXT
+    subscription_original_txn_id TEXT, subscription_expires_at TEXT, subscription_updated_at TEXT,
+    subscription_platform TEXT
   );
   CREATE TABLE iap_transaction_owners (
     environment TEXT, original_transaction_id TEXT, user_id INTEGER,

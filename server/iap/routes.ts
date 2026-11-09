@@ -14,6 +14,8 @@ import { requireUser, issueUserTokens } from "../auth";
 import { beginIapDiagnostic } from "./diagnostics";
 import { effectiveTier } from "./effective-tier";
 import { persistVerifiedSubscription, SubscriptionOwnershipError } from "./ownership";
+import { registerGoogleIapRoutes } from "./google-routes";
+import { googleAccountIdFor } from "./google-play";
 import {
   verifyAppleReceipt,
   ReceiptVerificationError,
@@ -28,6 +30,8 @@ const verifyRequestSchema = z.object({
 });
 
 export function registerIapRoutes(app: Express) {
+  registerGoogleIapRoutes(app, { sqlite, requireUser, issueTokens: issueUserTokens });
+
   /**
    * POST /api/v1/iap/verify-receipt
    *
@@ -120,8 +124,10 @@ export function registerIapRoutes(app: Express) {
       subscription_product_id: string | null;
       subscription_expires_at: string | null;
       subscription_original_txn_id: string | null;
+      subscription_platform: string | null;
     }>(sql`
-      SELECT tier, subscription_product_id, subscription_expires_at, subscription_original_txn_id
+      SELECT tier, subscription_product_id, subscription_expires_at, subscription_original_txn_id,
+        subscription_platform
       FROM app_users
       WHERE id = ${req.user!.id}
     `);
@@ -149,7 +155,17 @@ export function registerIapRoutes(app: Express) {
       tier: currentTier,
       productId: row.subscription_product_id ?? null,
       expiresAt: row.subscription_expires_at ?? null,
-      hasVerifiedSubscription: Boolean(row.subscription_original_txn_id),
+      // Apple-only flag: the iOS client uses it to decide whether to sync its
+      // device receipt. A Google purchase token must never trigger that.
+      hasVerifiedSubscription: Boolean(row.subscription_original_txn_id) &&
+        row.subscription_platform !== "google",
+      // "apple" | "google" | null. Legacy rows (null) are Apple.
+      platform: row.subscription_original_txn_id
+        ? (row.subscription_platform === "google" ? "google" : "apple")
+        : null,
+      // Passed to Play Billing as obfuscatedAccountId so the server can bind
+      // a purchase to this account. Not a secret; not reversible.
+      googleAccountId: googleAccountIdFor(req.user!.id),
     });
   });
 }

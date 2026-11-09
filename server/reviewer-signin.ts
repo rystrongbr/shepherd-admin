@@ -8,6 +8,8 @@ export const REVIEWER_ACCOUNTS = {
   "apple-review@myshepherdapp.church": "REVIEWER_ENTERPRISE_PASSWORD_HASH",
   "apple-review+free@myshepherdapp.church": "REVIEWER_FREE_PASSWORD_HASH",
   "apple-review+expired@myshepherdapp.church": "REVIEWER_EXPIRED_PASSWORD_HASH",
+  // Google Play review only. Separate identity and password from Apple's.
+  "google-review@myshepherdapp.church": "REVIEWER_GOOGLE_PASSWORD_HASH",
 } as const;
 
 type ReviewerUser = {
@@ -77,7 +79,7 @@ export function registerReviewerSignin(app: Express, deps: Dependencies) {
     const hash = allowed
       ? env[REVIEWER_ACCOUNTS[normalized as keyof typeof REVIEWER_ACCOUNTS]]
       : paidHash;
-    // The optional third account must not disable the two existing logins.
+    // Optional accounts (expired demo, Google) must not disable the two existing logins.
     if (!validReviewerHash(hash)) return res.status(503).json(unavailable);
     try {
       const matches = await bcrypt.compare(password, hash);

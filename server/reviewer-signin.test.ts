@@ -152,3 +152,23 @@ test("production route bypasses admin gate and uses real storage and token issue
   assert.match(publicPaths, /"\/user\/reviewer-signin"/);
   assert.match(source, /registerReviewerSignin\(app,\s*\{\s*findUser: email => storage.getUserByEmail\(email\),\s*issueTokens: issueUserTokens,/);
 });
+
+test("optional Google reviewer uses its own hash and never the Apple passwords", async () => {
+  const googleEmail = "google-review@myshepherdapp.church";
+  const googlePassword = "test-only-google-password";
+  const absent = await fixture();
+  try {
+    assert.equal((await absent.post({ email: googleEmail, password: freePassword })).response.status, 503);
+    assert.equal((await absent.post({ email: paidEmail, password: paidPassword })).response.status, 200);
+  } finally { await absent.close(); }
+  const configured = await fixture({ REVIEWER_GOOGLE_PASSWORD_HASH: bcrypt.hashSync(googlePassword, 12) });
+  try {
+    assert.equal((await configured.post({ email: googleEmail, password: freePassword })).response.status, 401);
+    assert.equal((await configured.post({ email: googleEmail, password: paidPassword })).response.status, 401);
+    assert.equal((await configured.post({ email: freeEmail, password: googlePassword })).response.status, 401);
+    const { response, body } = await configured.post({ email: googleEmail, password: googlePassword });
+    assert.equal(response.status, 200);
+    assert.equal(body.user.email, googleEmail);
+    assert.equal((configured.issued.at(-1) as { tier: string }).tier, "free");
+  } finally { await configured.close(); }
+});
