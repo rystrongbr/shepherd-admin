@@ -9,6 +9,8 @@ import helmet from "helmet";
 import { sqlite } from "./storage";
 import { runOwnerPasswordReset } from "./security/ownerPasswordReset";
 import { provisionExpiredReviewerDemo } from "./security/expiredReviewerDemo";
+import { provisionGoogleReviewer } from "./security/googleReviewer";
+import { buildAssetLinks } from "./iap/assetlinks";
 
 // Explicit operator recovery only. With no reset variables this does nothing.
 // Runs before serving requests; never changes consumer/reviewer credentials.
@@ -16,6 +18,10 @@ runOwnerPasswordReset(sqlite);
 const expiredReviewerResult = provisionExpiredReviewerDemo(sqlite);
 if (expiredReviewerResult !== "disabled") {
   console.log(`[expired-reviewer-demo] ${expiredReviewerResult}`);
+}
+const googleReviewerResult = provisionGoogleReviewer(sqlite);
+if (googleReviewerResult !== "disabled") {
+  console.log(`[google-reviewer] ${googleReviewerResult}`);
 }
 
 const app = express();
@@ -268,6 +274,15 @@ app.use((req, res, next) => {
         // opt in with 'allow' or the file will never be served.
         { dotfiles: "allow" },
       );
+    });
+
+    // Android App Links (assetlinks.json) — the Android counterpart of AASA.
+    // Same rules: JSON, no redirect, registered before the SPA fallback.
+    app.get("/.well-known/assetlinks.json", (_req, res) => {
+      const links = buildAssetLinks();
+      if (!links) return res.status(404).json({ error: "Not configured" });
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.json(links);
     });
 
     // Magic-link verification landing page. This path is the target of the

@@ -340,6 +340,10 @@ addColumnIfMissing("app_users",      "subscription_product_id",        "TEXT");
 addColumnIfMissing("app_users",      "subscription_original_txn_id",   "TEXT");
 addColumnIfMissing("app_users",      "subscription_expires_at",        "TEXT");
 addColumnIfMissing("app_users",      "subscription_updated_at",        "TEXT");
+// Store that owns subscription_original_txn_id: 'apple', 'google', or NULL
+// (legacy rows written before Google Play billing, all Apple). For Google the
+// stored id is the Play purchase token.
+addColumnIfMissing("app_users",      "subscription_platform",          "TEXT");
 // Additive ownership registry. Populated on verified purchase/restore only;
 // creating it never rewrites existing accounts or their canceled subscriptions.
 sqlite.exec(`CREATE TABLE IF NOT EXISTS iap_transaction_owners (
