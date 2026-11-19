@@ -57,6 +57,8 @@ import { registerWaitlist } from "./waitlist/routes";
 import { createWaitlistStore } from "./waitlist/store";
 import { sendWaitlistWelcome } from "./waitlist/email";
 import { registerMarketingMetrics } from "./metrics/marketing";
+import { registerSmartLink } from "./smart-link/routes";
+import { createSmartLinkStore } from "./smart-link/store";
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
 // Simple token-based auth for the admin dashboard.
@@ -123,6 +125,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       next();
     }),
   });
+  // Public smart download link (/get, /download). Not under /api, so it never
+  // reaches the auth gate; registered before the production SPA catch-all.
+  const smartLinkStore = createSmartLinkStore(sqlite);
+  try { smartLinkStore.init(); } catch (error) {
+    console.error("[smart-link] table init failed:", error instanceof Error ? error.message : "unknown error");
+  }
+  registerSmartLink(app, { record: click => smartLinkStore.record(click) });
   // Read-only aggregate marketing metrics. Registered before the /api gate (like
   // the waitlist) so it can accept MARKETING_METRICS_TOKEN as well as the
   // existing admin session; its own guard falls back to requireAdmin.
