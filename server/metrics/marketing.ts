@@ -326,6 +326,64 @@ export function computeMarketingMetrics(
     waitlist.byCampaign = group("campaign");
   }
 
+  // ─── Smart download link clicks (/get, /download) ─────────────────────────
+  // PII-free by construction: the table only has timestamp, src, campaign and
+  // a coarse platform bucket.
+  const SMART_LINK_PLATFORMS = ["ios", "android", "desktop", "other"] as const;
+  type SmartLinkPlatform = (typeof SMART_LINK_PLATFORMS)[number];
+  const emptyPlatforms = () => ({ ios: 0, android: 0, desktop: 0, other: 0 });
+  let smartLinkByDay = new Map<string, number>();
+  const smartLinkByDayPlatform = new Map<string, Record<SmartLinkPlatform, number>>();
+  const smartLinkClicks = {
+    available: has("smart_link_clicks"),
+    totalAllTime: 0,
+    clicksInWindow: 0,
+    byPlatform: emptyPlatforms(),
+    bySource: {} as Record<string, number>,
+    byCampaign: {} as Record<string, number>,
+    bySourceAndPlatform: {} as Record<string, Record<SmartLinkPlatform, number>>,
+    daily: [] as Array<{ date: string; total: number } & Record<SmartLinkPlatform, number>>,
+  };
+  if (smartLinkClicks.available) {
+    const inWindow = `substr(created_at, 1, 10) BETWEEN ? AND ?`;
+    const bucket = `CASE WHEN platform IN ('ios', 'android', 'desktop') THEN platform ELSE 'other' END`;
+    smartLinkClicks.totalAllTime = get<Count>(`SELECT COUNT(*) AS n FROM smart_link_clicks`)?.n ?? 0;
+    for (const r of all<{ day: string; p: SmartLinkPlatform; n: number }>(
+      `SELECT substr(created_at, 1, 10) AS day, ${bucket} AS p, COUNT(*) AS n FROM smart_link_clicks
+       WHERE ${inWindow} GROUP BY day, p`, startDate, endDate,
+    )) {
+      const row = smartLinkByDayPlatform.get(r.day) ?? emptyPlatforms();
+      row[r.p] += r.n;
+      smartLinkByDayPlatform.set(r.day, row);
+      smartLinkClicks.byPlatform[r.p] += r.n;
+      smartLinkClicks.clicksInWindow += r.n;
+    }
+    smartLinkByDay = new Map(Array.from(smartLinkByDayPlatform, ([d, row]) => [d, row.ios + row.android + row.desktop + row.other]));
+    for (const r of all<{ k: string; n: number }>(
+      `SELECT src AS k, COUNT(*) AS n FROM smart_link_clicks WHERE ${inWindow}
+       GROUP BY k ORDER BY n DESC LIMIT ${TOP_N}`, startDate, endDate,
+    )) smartLinkClicks.bySource[r.k || "unknown"] = r.n;
+    for (const r of all<{ k: string; n: number }>(
+      `SELECT campaign AS k, COUNT(*) AS n FROM smart_link_clicks WHERE ${inWindow}
+       GROUP BY k ORDER BY n DESC LIMIT ${TOP_N}`, startDate, endDate,
+    )) smartLinkClicks.byCampaign[r.k || "(none)"] = r.n;
+    const topSources = new Set(Object.keys(smartLinkClicks.bySource));
+    for (const r of all<{ k: string; p: SmartLinkPlatform; n: number }>(
+      `SELECT src AS k, ${bucket} AS p, COUNT(*) AS n FROM smart_link_clicks WHERE ${inWindow}
+       GROUP BY k, p`, startDate, endDate,
+    )) {
+      const key = r.k || "unknown";
+      if (!topSources.has(key)) continue;
+      const row = smartLinkClicks.bySourceAndPlatform[key] ?? emptyPlatforms();
+      row[r.p] += r.n;
+      smartLinkClicks.bySourceAndPlatform[key] = row;
+    }
+  }
+  smartLinkClicks.daily = days.map(date => {
+    const row = smartLinkByDayPlatform.get(date) ?? emptyPlatforms();
+    return { date, total: smartLinkByDay.get(date) ?? 0, ...row };
+  });
+
   const daily = days.map(date => ({
     date,
     signups: signupsByDay.get(date) ?? 0,
@@ -341,6 +399,7 @@ export function computeMarketingMetrics(
     donationAmountCents: donationCentsByDay.get(date) ?? 0,
     stayConnectedSignups: memberSignupsByDay.get(date) ?? 0,
     waitlistSignups: waitlistByDay.get(date) ?? 0,
+    smartLinkClicks: smartLinkByDay.get(date) ?? 0,
   }));
   const sum = (key: keyof (typeof daily)[number]) =>
     daily.reduce((acc, d) => acc + (typeof d[key] === "number" ? (d[key] as number) : 0), 0);
@@ -369,6 +428,7 @@ export function computeMarketingMetrics(
       donations: donationsInWindow,
       stayConnectedSignups: sum("stayConnectedSignups"),
       waitlistSignups: sum("waitlistSignups"),
+      smartLinkClicks: sum("smartLinkClicks"),
     },
     subscriptions: {
       activeByProduct,
@@ -377,7 +437,7 @@ export function computeMarketingMetrics(
       lapsedAllTime,
     },
     donations: { amountCentsByCurrency: donationAmountCentsByCurrency, byFrequency: donationsByFrequency },
-    attribution: { stayConnectedSignupsBySource: memberSignupsBySource, launchWaitlist: waitlist },
+    attribution: { stayConnectedSignupsBySource: memberSignupsBySource, launchWaitlist: waitlist, smartLinkClicks },
     daily,
     definitions: {
       usersByTier: "Effective tier now (store subscriptions count as paid only until their stored expiry; manual grants always count).",
@@ -390,6 +450,7 @@ export function computeMarketingMetrics(
       donations: "Completed Stripe donations (web).",
       stayConnectedSignups: "member_signups rows (first-visit stay-connected modal), grouped by their source label.",
       launchWaitlist: "Pre-launch waitlist signups with self-reported device and UTM-style source/medium/campaign labels (top 25 each).",
+      smartLinkClicks: "GET requests to the public smart download link (/get, /download) by whitelisted src/campaign label and coarse platform (ios/android/desktop/other; crawlers count as other). Clicks are not installs. iPads in desktop mode are counted as desktop before the page's client-side redirect. Top 25 sources/campaigns. No IP or User-Agent is stored.",
       internal: `Excluded by default: is_test_user = 1 or email ending ${INTERNAL_EMAIL_SUFFIX} (staff and store-review accounts). Pass includeInternal=true to include them.`,
     },
     notDerivable: [
