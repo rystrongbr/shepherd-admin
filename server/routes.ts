@@ -56,6 +56,7 @@ import { sqlite } from "./storage";
 import { registerWaitlist } from "./waitlist/routes";
 import { createWaitlistStore } from "./waitlist/store";
 import { sendWaitlistWelcome } from "./waitlist/email";
+import { registerMarketingMetrics } from "./metrics/marketing";
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
 // Simple token-based auth for the admin dashboard.
@@ -122,6 +123,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       next();
     }),
   });
+  // Read-only aggregate marketing metrics. Registered before the /api gate (like
+  // the waitlist) so it can accept MARKETING_METRICS_TOKEN as well as the
+  // existing admin session; its own guard falls back to requireAdmin.
+  registerMarketingMetrics(app, { sqlite, requireAdmin });
   app.use("/api", attachUserIfPresent);
   // Apply auth middleware to all /api routes
   app.use("/api", requireAuth);
