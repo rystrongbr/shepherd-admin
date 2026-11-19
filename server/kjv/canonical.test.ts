@@ -25,6 +25,14 @@ test("single verse, preserving LORD caps and punctuation", () => {
   assert.match(kjv.canonicalText("John 3:16", corpus)!, /^For God so loved the world, that he gave his only begotten Son/);
 });
 
+test("corpus includes the shepherd-mobile#44 corrections", () => {
+  assert.equal(kjv.canonicalText("John 20:28", corpus), "And Thomas answered and said unto him, My Lord and my God.");
+  assert.match(kjv.canonicalText("Genesis 15:2", corpus)!, /^And Abram said, Lord GOD, what wilt thou give me/);
+  assert.match(kjv.canonicalText("Joshua 4:5", corpus)!, /take ye up every man/);
+  assert.match(kjv.canonicalText("1 John 2:23", corpus)!, /the Father: but he that acknowledgeth/);
+  assert.equal(kjv.canonicalText("Psalm 92:1", corpus), "It is a good thing to give thanks unto the LORD, and to sing praises unto thy name, O most High:");
+});
+
 test("ranges, en-dash ranges, multi-verse lists, cross-chapter, whole chapter", () => {
   const r = kjv.canonicalText("Philippians 4:6-7", corpus)!;
   assert.ok(r.startsWith("Be careful for nothing;"));
