@@ -270,3 +270,13 @@ test("real routing: /get is public, not behind the /api gate, and the gate still
     ]);
   } finally { await stop(server); }
 });
+
+test("desktop fallback page offers QR + marketing site, not the consumer web app", async () => {
+  const { renderFallbackPage } = await import("./page");
+  const { DESKTOP_QR_TARGET } = await import("./qr");
+  const html = renderFallbackPage({ appStore: APP_STORE_URL, googlePlay: GOOGLE_PLAY_URL });
+  assert.ok(html.includes('class="qr"'), "QR code is rendered");
+  assert.ok(html.includes("https://myshepherdapp.church/"), "links to the marketing site");
+  assert.ok(!html.includes('href="https://app.myshepherdapp.church/"'), "no link to the consumer web app");
+  assert.equal(sanitizeLabel(new URL(DESKTOP_QR_TARGET).searchParams.get("src") ?? "", "unknown"), "qr_desktop");
+});
