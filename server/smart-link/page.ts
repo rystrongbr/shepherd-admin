@@ -1,4 +1,5 @@
 import { APP_STORE_BADGE, GOOGLE_PLAY_BADGE } from "./badges";
+import { DESKTOP_QR_SVG } from "./qr";
 
 const escapeHtml = (value: string) =>
   value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
@@ -59,6 +60,10 @@ h1 { font: 600 1.75rem/1.25 'Lora', Georgia, serif; color: var(--brown-dark); }
 .badges a:focus-visible { outline: 3px solid var(--brown); outline-offset: 4px; }
 .badges img { display: block; height: 56px; width: auto; }
 .badges .gp img { height: 81px; margin: -12.5px 0; } /* Google's PNG has built-in padding */
+.qr-wrap { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border); display: none; }
+.qr { display: block; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; }
+.qr-label { margin-top: 10px; font-size: .875rem; color: var(--text-mid); }
+@media (hover: hover) and (pointer: fine) { .qr-wrap { display: block; } }
 .note { margin-top: 24px; font-size: .8125rem; color: var(--text-mid); }
 .note a { color: var(--brown-dark); }
 @media (min-width: 520px) { .badges { flex-direction: row; justify-content: center; } }
@@ -78,7 +83,11 @@ h1 { font: 600 1.75rem/1.25 'Lora', Georgia, serif; color: var(--brown-dark); }
     <a class="as" href="${appStore}" rel="noopener"><img src="${APP_STORE_BADGE}" alt="Download on the App Store" width="168" height="56"></a>
     <a class="gp" href="${googlePlay}" rel="noopener"><img src="${GOOGLE_PLAY_BADGE}" alt="Get it on Google Play" width="209" height="81"></a>
   </div>
-  <p class="note">Free on iPhone, iPad and Android. Prefer the web? <a href="https://app.myshepherdapp.church/">Open My Shepherd in your browser</a>.</p>
+  <div class="qr-wrap">
+    ${DESKTOP_QR_SVG}
+    <p class="qr-label">On a computer? Scan with your phone's camera.</p>
+  </div>
+  <p class="note">Free on iPhone, iPad and Android. <a href="https://myshepherdapp.church/">Learn more at myshepherdapp.church</a></p>
 </main>
 </body>
 </html>`;
