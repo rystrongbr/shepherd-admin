@@ -11,6 +11,7 @@ import { runOwnerPasswordReset } from "./security/ownerPasswordReset";
 import { provisionExpiredReviewerDemo } from "./security/expiredReviewerDemo";
 import { provisionGoogleReviewer } from "./security/googleReviewer";
 import { buildAssetLinks } from "./iap/assetlinks";
+import { isCanonicalKjvEnabled, loadCorpus } from "./kjv/canonical";
 
 // Explicit operator recovery only. With no reset variables this does nothing.
 // Runs before serving requests; never changes consumer/reviewer credentials.
@@ -369,5 +370,8 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
+    // Warm the KJV corpus only when the flag is on (logs a loud error if missing).
+    if (isCanonicalKjvEnabled()) loadCorpus();
+    log(`KJV canonical text: ${isCanonicalKjvEnabled() ? "on" : "off"}`);
   });
 })();

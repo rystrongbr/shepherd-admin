@@ -24,12 +24,14 @@
  *      by Sonnet 5.5, so we no longer use a forced tool call. Structured
  *      outputs work on both Sonnet 4.5 and 5.5, which lets us deploy this
  *      code before flipping the model.
- *   5. KJV-only at the prompt layer. Stage B (a later PR) adds real RAG
- *      grounding against a KJV corpus; this stage relies on Sonnet's
- *      training-data recall of the KJV plus an explicit instruction
- *      to never fabricate references.
+ *   5. KJV-only at the prompt layer, plus (when KJV_CANONICAL_TEXT=on)
+ *      post-generation grounding: every citation's text is replaced with
+ *      the verbatim text from the bundled KJV corpus and unknown references
+ *      are dropped (server/kjv/canonical.ts). With the flag off this stage
+ *      relies on the model's recall of the KJV, as before.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { groundCitations, isCanonicalKjvEnabled, loadCorpus, logGrounding } from "./kjv/canonical";
 
 // ─── Client + config ──────────────────────────────────────────────────
 
@@ -313,7 +315,27 @@ async function requestAnswer(userMessage: string, attempt: number): Promise<AskR
   } catch (err: any) {
     throw new AiResponseError(err?.message || "invalid answer");
   }
-  return parsed;
+  return applyCanonicalKjv(parsed, attempt);
+}
+
+/**
+ * KJV_CANONICAL_TEXT=on: replace each citation's text with the verbatim KJV
+ * text of its reference and drop citations whose reference isn't real KJV.
+ * If every citation is dropped, throw AiResponseError so callAnthropic's
+ * existing single retry runs; a second failure surfaces exactly like any
+ * other invalid answer today. Flag off (default) or corpus missing → the
+ * answer is returned untouched.
+ */
+function applyCanonicalKjv(r: AskResponse, attempt: number): AskResponse {
+  if (!isCanonicalKjvEnabled()) return r;
+  const corpus = loadCorpus();
+  if (!corpus) return r;
+  const { citations, counts } = groundCitations(r.citations, corpus);
+  logGrounding(`ai-v2 attempt=${attempt}`, counts);
+  if (citations.length === 0) {
+    throw new AiResponseError("no citation resolved to a real KJV passage");
+  }
+  return { ...r, citations };
 }
 
 /** Token + latency log line. Never includes the question or answer text. */
