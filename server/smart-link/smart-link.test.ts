@@ -129,6 +129,22 @@ test("GET /get and /download route by device with no-store", async () => {
   } finally { await stop(server); }
 });
 
+test("/podcast on the app domain redirects to the podcast smart link", async () => {
+  const { server, base } = await start();
+  try {
+    for (const path of ["/podcast", "/podcast/", "/podcast?src=ig"]) {
+      const res = await get(`${base}${path}`, UA.iphone);
+      assert.equal(res.status, 302, path);
+      assert.equal(res.headers.get("location"), "/get?src=podcast");
+      assert.equal(res.headers.get("cache-control"), "no-store");
+    }
+    let res = await get(`${base}/podcast?campaign=Ep01`, UA.desktopChrome);
+    assert.equal(res.headers.get("location"), "/get?src=podcast&campaign=ep01");
+    res = await get(`${base}/podcast/more`, UA.iphone);
+    assert.equal(await res.text(), "SPA");
+  } finally { await stop(server); }
+});
+
 test("src/campaign sanitization flows to redirect and log; HEAD is not logged", async () => {
   const { server, base, clicks } = await start();
   try {

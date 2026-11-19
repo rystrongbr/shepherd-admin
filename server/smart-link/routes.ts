@@ -102,4 +102,15 @@ export function registerSmartLink(app: Express, deps: SmartLinkDeps) {
     // Exact path or a single trailing slash; nothing deeper.
     app.get(new RegExp(`^${path}/?$`), logLimiter, handler);
   }
+
+  // Safety net: the podcast short link is myshepherdapp.church/podcast
+  // (Cloudflare 302 -> /get?src=podcast). If someone shares it with the app.
+  // subdomain by mistake, send them through the same smart link instead of
+  // the SPA. Only the optional campaign label is carried over.
+  app.get(/^\/podcast\/?$/, (req, res) => {
+    const campaign = sanitizeLabel(req.query.campaign, "");
+    res.set("Cache-Control", "no-store");
+    res.set("X-Robots-Tag", "noindex");
+    res.redirect(302, `/get?src=podcast${campaign ? `&campaign=${campaign}` : ""}`);
+  });
 }
