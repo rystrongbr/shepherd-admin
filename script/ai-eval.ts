@@ -22,6 +22,14 @@ import { ask, drillDown, setAnthropicClient, validateResponse, type AskResponse 
 import { detectCrisisCategory } from "../server/crisis";
 import { EVAL_QUESTIONS, type EvalQuestion } from "../server/ai-eval/questions";
 import { verifyCitation, type KjvStatus } from "../server/ai-eval/kjvVerify";
+import { canonicalText, loadCorpus } from "../server/kjv/canonical";
+
+// The eval measures the model's own recall of KJV wording, so production's
+// canonical-text replacement is forced off here (otherwise every citation
+// would trivially match). "Exact wording" below = what fraction of citations
+// would pass through unchanged if KJV_CANONICAL_TEXT=on.
+process.env.KJV_CANONICAL_TEXT = "off";
+const kjvCorpus = loadCorpus();
 
 // $ per million tokens (input, output). Source: Anthropic pricing page, Oct 2026.
 const PRICES: Record<string, [number, number]> = {
@@ -58,7 +66,7 @@ interface Row {
   model: string; id: string; kind: string; question: string; passageRef?: string;
   ok: boolean; error?: string; ms: number; interceptedByCrisisCheck?: string;
   usage: Usage; costUsd: number; answer?: AskResponse;
-  kjv: Array<{ ref: string; status: KjvStatus; similarity?: number; detail?: string }>;
+  kjv: Array<{ ref: string; status: KjvStatus; similarity?: number; detail?: string; exact?: boolean }>;
 }
 
 // Wrap the real client so we can record token usage per question.
@@ -114,7 +122,11 @@ async function runOne(model: string, q: EvalQuestion): Promise<Row> {
     validateResponse(answer);
     row.ok = true;
     row.answer = answer;
-    if (haveKjv) row.kjv = answer.citations.map(c => ({ ref: c.ref, ...verifyCitation(kjvDir, c.ref, c.text) }));
+    if (haveKjv) row.kjv = answer.citations.map(c => {
+      const canon = kjvCorpus ? canonicalText(c.ref, kjvCorpus) : null;
+      const exact = canon !== null && c.text.replace(/\s+/g, " ").trim() === canon;
+      return { ref: c.ref, ...verifyCitation(kjvDir, c.ref, c.text), exact };
+    });
   } catch (err: any) {
     row.error = String(err?.message || err).slice(0, 300);
   } finally {
@@ -157,6 +169,7 @@ function summarize(model: string, rows: Row[]) {
     costPerAnswer: ok.length ? (totalCost / ok.length).toFixed(4) : "-",
     citations: kjv.length, verified: count("verified"), close: count("close"), mismatch: count("text_mismatch"),
     invalid: count("invalid_ref"), unparsed: count("unparsed"),
+    exact: kjv.filter(k => k.exact).length,
   };
 }
 
@@ -183,6 +196,7 @@ async function main() {
   line("Est. cost per answer (USD)", s => `$${s.costPerAnswer}`);
   line("Citations checked", s => String(s.citations));
   line("KJV verified", s => `${s.verified} (${pct(s.verified, s.citations)})`);
+  line("Exact KJV wording, char-for-char (unchanged by KJV_CANONICAL_TEXT)", s => `${s.exact} (${pct(s.exact, s.citations)})`);
   line("KJV close (review)", s => String(s.close));
   line("KJV text mismatch", s => String(s.mismatch));
   line("**Invalid reference (fabricated?)**", s => `**${s.invalid}**`);

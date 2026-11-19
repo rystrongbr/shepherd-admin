@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { canonicalText, isCanonicalKjvEnabled, loadCorpus, logGrounding } from "./kjv/canonical";
 
 // OpenAI client — key stored in env var OPENAI_API_KEY
 const openai = new OpenAI({
@@ -31,6 +32,27 @@ export interface AIResponse {
   followUpTopics: string[];
 }
 
+/**
+ * KJV_CANONICAL_TEXT=on: swap the model's verse text for the verbatim KJV
+ * text. A reference that isn't real KJV is treated like any other incomplete
+ * AI response (throws → the route's existing 500 path). Flag off → untouched.
+ */
+function applyCanonicalKjv(parsed: AIResponse): AIResponse {
+  if (!isCanonicalKjvEnabled()) return parsed;
+  const corpus = loadCorpus();
+  if (!corpus) return parsed;
+  const canon = canonicalText(parsed.verse.ref, corpus);
+  const exact = canon !== null && parsed.verse.text.replace(/\s+/g, " ").trim() === canon;
+  logGrounding("ai-legacy", {
+    total: 1,
+    exact: exact ? 1 : 0,
+    replaced: canon !== null && !exact ? 1 : 0,
+    dropped: canon === null ? 1 : 0,
+  });
+  if (canon === null) throw new Error("AI returned a reference not found in the KJV");
+  return { ...parsed, verse: { ...parsed.verse, text: canon } };
+}
+
 export async function getDeeperResponse(
   topic: string,
   question: string,
@@ -54,7 +76,7 @@ export async function getDeeperResponse(
   if (!parsed.verse?.ref || !parsed.verse?.text || !parsed.reflection) {
     throw new Error("AI returned incomplete response");
   }
-  return parsed;
+  return applyCanonicalKjv(parsed);
 }
 
 export async function getScriptureResponse(
@@ -84,5 +106,5 @@ export async function getScriptureResponse(
     throw new Error("AI returned incomplete response");
   }
 
-  return parsed;
+  return applyCanonicalKjv(parsed);
 }

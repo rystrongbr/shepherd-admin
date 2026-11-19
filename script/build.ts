@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "fs/promises";
+import { rm, readFile, copyFile } from "fs/promises";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -57,6 +57,12 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+
+  // Canonical KJV corpus, read at runtime by server/kjv/canonical.ts when
+  // KJV_CANONICAL_TEXT=on. The repo copy (server/kjv/data) is also present
+  // in the Docker image; this copy keeps dist/ self-contained.
+  await copyFile("server/kjv/data/kjv.json", "dist/kjv.json");
+  console.log("copied KJV corpus to dist/kjv.json");
 }
 
 buildAll().catch((err) => {
